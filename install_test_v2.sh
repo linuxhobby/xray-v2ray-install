@@ -208,38 +208,46 @@ check_dependencies() {
 }
 
 # 自定义函数：强制开启防火墙函数
+# 自定义函数：强制开启防火墙函数（安全优化版）
 enable_firewall() {
     echo -e "${Font_Cyan}>>> 配置安全防火墙...${Font_Suffix}"
     
-    # 确保安装了 ufw
+    # 确保安装 ufw
     apt-get install -y ufw -qq
 
-    # 【自动识别】获取当前 sshd 实际监听的端口
-    local ssh_port=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n1)
-    
-    # 如果没识别到（极少数情况），则尝试从配置文件读取，最后默认 22
+    # 【关键修复】获取当前 sshd 实际监听端口
+    local ssh_port=$(ss -tlnp | grep -oP 'sshd.*:\K\d+' | head -n1)
     if [[ -z "$ssh_port" ]]; then
-        ssh_port=$(grep "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
+        ssh_port=$(grep "^Port" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
     fi
 
     echo -e "${Font_Yellow}检测到当前 SSH 端口为: ${ssh_port}${Font_Suffix}"
 
-    # 设置默认策略
+    # ==================== 安全顺序修复 ====================
+    echo -e "${Font_Cyan}>>> 重置并重新配置 UFW...${Font_Suffix}"
+    
+    # 1. 重置 UFW（清除旧规则，避免冲突）
+    echo "y" | ufw reset >/dev/null 2>&1 || true
+
+    # 2. 设置默认策略
     ufw default allow outgoing
     ufw default deny incoming
 
-    # 【关键】放行识别到的 SSH 端口，并开启防爆破限速
-    ufw limit "${ssh_port}/tcp" comment 'SSH-Port-Auto-Detected'
+    # 3. 【最重要】优先插入 SSH 规则（放在规则链最前面）
+    ufw insert 1 limit "${ssh_port}/tcp" comment 'SSH-Auto-Protect'
 
-    # 放行业务端口
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 443/udp
+    # 4. 放行业务端口
+    ufw allow 80/tcp     comment 'HTTP'
+    ufw allow 443/tcp    comment 'HTTPS'
+    ufw allow 443/udp    comment 'QUIC'
 
-    # 强制激活
+    # 5. 启用 UFW
     echo "y" | ufw enable
-    
-    echo -e "${Font_Green}[OK] 防火墙已启动，已自动放行 SSH 端口 ${ssh_port}。${Font_Suffix}"
+
+    # 6. 最终状态确认
+    echo -e "${Font_Green}[OK] 防火墙已安全启用${Font_Suffix}"
+    echo -e "${Font_Cyan}当前活跃规则：${Font_Suffix}"
+    ufw status numbered | grep -E 'SSH|80|443'
 }
 
 
@@ -395,17 +403,20 @@ disable_bbr() {
 
 # 获取本机 IP 地址
 get_local_ip() {
-    # 如果变量已经有值了，就不再重复获取
-    [[ -n "$LOCAL_IP" ]] && return
-    
-    echo -e "${Font_Cyan}>>> 正在获取本机 IP 地址...${Font_Suffix}"
-    # 使用 5 秒超时，如果 ip.sb 失败，尝试使用 ipinfo.io 备用
+    [[ -n "$LOCAL_IP" && "$LOCAL_IP" != "你的服务器IP" ]] && return
+
+    local cache_file="/tmp/.server_ip.cache"
+    if [ -f "$cache_file" ] && [ $(( $(date +%s) - $(stat -c %Y "$cache_file") )) -lt 3600 ]; then
+        LOCAL_IP=$(cat "$cache_file")
+        return
+    fi
+
     LOCAL_IP=$(curl -4 -s --connect-timeout 5 ip.sb || curl -4 -s --connect-timeout 5 ipinfo.io/ip)
     
     if [[ -z "$LOCAL_IP" ]]; then
-        echo -e "${Font_Red}[警告] 无法自动获取公网 IP，部分链接显示可能受限。${Font_Suffix}"
-        LOCAL_IP="你的服务器IP" # 回退占位符
+        LOCAL_IP="你的服务器IP"
     fi
+    echo "$LOCAL_IP" > "$cache_file"
 }
 # ------------- BBR 管理子菜单 START -------------
 # --- 1. 环境准备模块 ---
@@ -717,7 +728,9 @@ EOF
 # 5. 调用展示函数 (将全局变量 LOCAL_IP 传递给显示模块)
     if [ "$mode" == "1" ]; then
         # 假设 show_vless_reality_info 内部会用到 IP
-        show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$dest_server"
+        #show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$dest_server"
+        get_local_ip
+        show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$dest_server" "$LOCAL_IP"
     else
         show_vless_reality_xhttp_info "$uuid" "$pub_key" "$short_id" "$dest_server" "$path"
     fi
@@ -1474,9 +1487,9 @@ main_menu() {
     
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/10   ${Font_Suffix}"
+    echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/15   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.10.18.58（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.15.19.21（release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
