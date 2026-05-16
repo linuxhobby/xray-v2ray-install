@@ -2,6 +2,8 @@
 
 # ====================================================
 # 作者: 人生若只如初见
+# https://www.vultr.com/?ref=9698050-9J
+
 # Release、Standard、Snapshot、Staging
 # 支持以下协议矩阵一键自动安装
 #  【1】 . 安装 VLESS-REALITY-Vision
