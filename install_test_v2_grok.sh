@@ -599,7 +599,7 @@ check_domain() {
     done
 }
 
-# --- 查看当前协议（完全保留）---
+# --- 查看当前协议（全协议矩阵适配版）---
 check_current_protocol() {
     if [[ ! -f $config_path ]]; then
         echo -e "${Font_Red}错误: 未检测到配置文件 ($config_path)，请先安装协议。${Font_Suffix}"
@@ -609,45 +609,81 @@ check_current_protocol() {
 
     echo -e "${Font_Magenta}--- 当前协议详细信息 ---${Font_Suffix}"
     
-    local uuid=$(grep -m1 '"id":' $config_path | grep -oP '(?<="id": ")[^"]+' || grep -m1 '"password":' $config_path | grep -oP '(?<="password": ")[^"]+')
-    local network=$(grep -m1 '"network":' $config_path | grep -oP '(?<="network": ")[^"]+')
+    # 1. 基础数据提取（加 || true 容错，防止 set -e 导致脚本退出）
+    local uuid=$(grep -m1 '"id":' $config_path | grep -oP '(?<="id": ")[^"]+' 2>/dev/null || grep -m1 '"password":' $config_path | grep -oP '(?<="password": ")[^"]+' 2>/dev/null || echo "")
+    local network=$(grep -m1 '"network":' $config_path | grep -oP '(?<="network": ")[^"]+' 2>/dev/null || echo "tcp")
+    local protocol=$(grep -m1 '"protocol":' $config_path | grep -oP '(?<="protocol": ")[^"]+' 2>/dev/null || echo "")
     
-    local ip=$(curl -4 -s --connect-timeout 5 ip.sb || curl -s http://ipv4.icanhazip.com)
+    # 确保 IP 已就绪
+    [[ -z "$LOCAL_IP" || "$LOCAL_IP" == "你的服务器IP" ]] && get_local_ip
+    
+    # 域名提取容错处理
     local domain=""
     if [[ -f "/etc/caddy/Caddyfile" ]]; then
-        domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile | head -n1 | tr -d ' ')
+        domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile 2>/dev/null | head -n1 | tr -d ' ' || echo "")
     fi
-    [[ -z "$domain" ]] && domain=$(grep -oP '(?<="serverNames": \[")[^"]+' $config_path | head -n1)
-    [[ -z "$domain" ]] && domain=$ip
+    if [[ -z "$domain" ]]; then
+        domain=$(grep -oP '(?<="serverNames": \[")[^"]+' $config_path 2>/dev/null | head -n1 | tr -d ' ' || echo "")
+    fi
+    [[ -z "$domain" ]] && domain=$LOCAL_IP
 
-    if grep -q "realitySettings" $config_path; then
-        local pub_key=$(cat ${conf_dir}/pub.key 2>/dev/null || echo "未找到公钥文件")
-        local short_id=$(grep -m1 '"shortIds":' $config_path | grep -oP '(?<="shortIds": \[").*(?="])' | cut -d'"' -f1)
-        local sni=$(grep -m1 '"serverNames":' $config_path | grep -oP '(?<="serverNames": \[").*(?="])' | cut -d'"' -f1)
-        show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$sni"
-    
-    elif [[ "$network" == "ws" ]]; then
-        local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-        if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "ws" "$uuid" "$domain" "$path"
-        else
-            show_vless_ws_info "$uuid" "$domain" "$path"
-        fi
-
+    # 2. 分流判定网络路径或服务名
+    local path_or_service=""
+    if [[ "$network" == "ws" || "$network" == "xhttp" ]]; then
+        path_or_service=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+' 2>/dev/null || echo "")
     elif [[ "$network" == "grpc" ]]; then
-        local serviceName=$(grep -m1 '"serviceName":' $config_path | grep -oP '(?<="serviceName": ")[^"]+')
-        if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "grpc" "$uuid" "$domain" "$serviceName"
+        path_or_service=$(grep -m1 '"serviceName":' $config_path | grep -oP '(?<="serviceName": ")[^"]+' 2>/dev/null || echo "")
+    fi
+
+    # 3. 核心协议分流解析
+    # ------------------ 分支 A: REALITY 协议 ------------------
+    if grep -q "realitySettings" $config_path 2>/dev/null; then
+        local pub_key=$(cat ${conf_dir}/pub.key 2>/dev/null || echo "未找到公钥文件")
+        local short_id=$(grep -m1 '"shortIds":' $config_path | grep -oP '(?<="shortIds": \[").*(?="])' 2>/dev/null | cut -d'"' -f1 || echo "")
+        local sni=$(grep -m1 '"serverNames":' $config_path | grep -oP '(?<="serverNames": \[").*(?="])' 2>/dev/null | cut -d'"' -f1 || echo "")
+        
+        if [[ "$network" == "xhttp" ]]; then
+            show_vless_reality_xhttp_info "$uuid" "$pub_key" "$short_id" "$sni" "$path_or_service"
         else
-            show_vless_grpc_info "$uuid" "$domain" "$serviceName"
+            show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$sni" "$LOCAL_IP"
         fi
 
-    elif [[ "$network" == "xhttp" ]]; then
-        local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-        show_vless_xhttp_info "$uuid" "$domain" "$path"
+    # ------------------ 分支 B: VLESS 带有 TLS ------------------
+    elif [[ "$protocol" == "vless" ]]; then
+        if [[ "$network" == "ws" ]]; then
+            show_vless_ws_info "$uuid" "$domain" "$path_or_service"
+        elif [[ "$network" == "grpc" ]]; then
+            show_vless_grpc_info "$uuid" "$domain" "$path_or_service"
+        elif [[ "$network" == "xhttp" ]]; then
+            show_vless_xhttp_info "$uuid" "$domain" "$path_or_service"
+        else
+            echo -e "${Font_Red}未能识别 VLESS 的传输层网络类型: $network${Font_Suffix}"
+        fi
+
+    # ------------------ 分支 C: Trojan 协议 ------------------
+    elif [[ "$protocol" == "trojan" ]]; then
+        if [[ "$network" == "ws" || "$network" == "grpc" ]]; then
+            show_trojan_info "$network" "$uuid" "$domain" "$path_or_service"
+        else
+            echo -e "${Font_Red}未能识别 Trojan 的传输层网络类型: $network${Font_Suffix}"
+        fi
+
+    # ------------------ 分支 D: VMess 协议 ------------------
+    elif [[ "$protocol" == "vmess" ]]; then
+        export UUID="$uuid"
+        export DOMAIN="$domain"
+        export WPATH="$path_or_service"
+        
+        if [[ "$network" == "ws" ]]; then
+            show_vmess_ws_info
+        elif [[ "$network" == "grpc" ]]; then
+            show_vmess_grpc_info
+        else
+            echo -e "${Font_Red}未能识别 VMess 的传输层网络类型: $network${Font_Suffix}"
+        fi
 
     else
-        echo -e "${Font_Red}未能识别协议类型。${Font_Suffix}"
+        echo -e "${Font_Red}未能识别内核配置文件中的主体协议类型。${Font_Suffix}"
     fi
     
     echo -e "${Font_Yellow}-----------------------------------------------------------${Font_Suffix}"
@@ -733,27 +769,22 @@ EOF
     fi
 }
 
-# ==================== 通用 TLS 协议安装函数（修复版）====================
 # ==================== 通用 TLS 协议安装函数（调试增强版）====================
 install_tls_protocol() {
     local protocol=$1
     local transport=$2
     local proto_name=$3
-
     check_domain
     local domain=$(cat /tmp/domain 2>/dev/null || echo "")
-    [[ -z "$domain" ]] && { 
-        echo -e "${Font_Red}[ERROR] 域名获取失败${Font_Suffix}"; exit 1; 
+    [[ -z "$domain" ]] && {
+        echo -e "${Font_Red}[ERROR] 域名获取失败${Font_Suffix}"; exit 1;
     }
-
     install_caddy
     common_tls_setup
-
     # 参数生成
     local auth=""
     local path_or_service=""
     local port=10001
-
     if [ "$protocol" = "trojan" ]; then
         read -p "请输入 Trojan 密码 (默认随机): " auth
         [[ -z "$auth" ]] && auth=$(openssl rand -hex 16)
@@ -763,12 +794,9 @@ install_tls_protocol() {
         [[ "$transport" == "grpc" ]] && port=10002
         [[ "$transport" == "xhttp" ]] && port=10003
     fi
-
     path_or_service=$(openssl rand -hex 6)
     check_port $port || { echo -e "${Font_Red}端口 $port 被占用${Font_Suffix}"; return 1; }
-
     echo -e "${Font_Cyan}正在配置 ${proto_name}...${Font_Suffix}"
-
     # ==================== Xray 配置 ====================
     local client_field
     if [ "$protocol" = "trojan" ]; then
@@ -776,7 +804,6 @@ install_tls_protocol() {
     else
         client_field="\"id\": \"$auth\""
     fi
-
     local stream=""
     case "$transport" in
         ws)
@@ -789,7 +816,6 @@ install_tls_protocol() {
             stream='"network": "xhttp", "xhttpSettings": { "path": "/'$path_or_service'", "mode": "auto" }'
             ;;
     esac
-
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -797,7 +823,7 @@ install_tls_protocol() {
         "port": $port,
         "listen": "127.0.0.1",
         "protocol": "$protocol",
-        "settings": { 
+        "settings": {
             "clients": [{ $client_field }],
             "decryption": "none"
         },
@@ -806,13 +832,11 @@ install_tls_protocol() {
     "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
-
     echo -e "${Font_Cyan}→ Xray 配置已写入${Font_Suffix}"
-
-    # ==================== Caddy 配置（已修复变量展开）===================
+    # ==================== Caddy 配置（关键修复：xhttp 与 grpc 同等待遇）===================
     local caddyfile="/etc/caddy/Caddyfile"
-    
-    if [ "$transport" = "grpc" ]; then
+   
+    if [ "$transport" = "grpc" ] || [ "$transport" = "xhttp" ]; then
         cat > "$caddyfile" << EOF
 $domain {
     tls {
@@ -836,23 +860,18 @@ $domain {
 EOF
     fi
     echo -e "${Font_Cyan}→ Caddy 配置已写入${Font_Suffix}"
-
     # ==================== 校验 ====================
     check_caddy || { echo -e "${Font_Red}[ERROR] Caddy 配置校验失败${Font_Suffix}"; return 1; }
     check_json "$config_path" || { echo -e "${Font_Red}[ERROR] Xray JSON 配置错误${Font_Suffix}"; return 1; }
-
     # ==================== 重启服务 ====================
     restart_service caddy || { echo -e "${Font_Red}[ERROR] Caddy 启动失败${Font_Suffix}"; return 1; }
     restart_service xray || { echo -e "${Font_Red}[ERROR] Xray 启动失败${Font_Suffix}"; return 1; }
-
     sleep 1.5
     check_service_alive $port "$proto_name"
     check_external_tcp "$domain" 443
-
     # ==================== 显示信息 ====================
     show_tls_info "$protocol" "$transport" "$auth" "$domain" "$path_or_service" "$proto_name"
 }
-
 
 # ------------------------------------------------ 信息展示模块（完全保留）------------------------------------------------
 show_vless_reality_info() {
@@ -865,6 +884,9 @@ show_vless_reality_info() {
     echo -e " 地址: ${LOCAL_IP}"  # <--- 直接使用全局变量
     local ps_name="VLESS-REALITY_${sni}_$(date +%Y%m%d)"
     local link="vless://$uuid@$LOCAL_IP:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=tcp#$ps_name"
+
+    # === 方案 A 新增：保存快照 ===
+    echo "$link" > "${conf_dir}/last_link.txt"
 
     echo -e "${Font_Green}VLESS-REALITY 安装成功！${Font_Suffix}"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
@@ -884,6 +906,9 @@ show_vless_reality_xhttp_info() {
     echo -e " 地址: ${LOCAL_IP}"  # <--- 直接使用全局变量
     local ps_name="VLESS-R-XHTTP_${sni}_$(date +%Y%m%d)"
     local link="vless://$uuid@$LOCAL_IP:443?encryption=none&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=xhttp&path=%2F$path#$ps_name"
+
+    # === 方案 A 新增：保存快照 ===
+    echo "$link" > "${conf_dir}/last_link.txt"
 
     echo -e "${Font_Green}VLESS-REALITY-xhttp 安装成功！${Font_Suffix}"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
@@ -1211,9 +1236,9 @@ main_menu() {
     
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/15   ${Font_Suffix}"
+    echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/15   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.15.19.21（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.17.04.57（release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
