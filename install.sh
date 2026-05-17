@@ -2,10 +2,8 @@
 
 # ====================================================
 # 作者: 人生若只如初见
-#   Tell A Friend about Vultr and Earn up to $100 for referring clients!
-#   https://www.vultr.com/?ref=9698050-9J
-#   Refer Vultr.com and earn $10 per paid signup!
-#   https://www.vultr.com/?ref=6999923
+# https://www.vultr.com/?ref=9698050-9J
+
 # Release、Standard、Snapshot、Staging
 # 支持以下协议矩阵一键自动安装
 #  【1】 . 安装 VLESS-REALITY-Vision
@@ -68,7 +66,7 @@ XRAY_VERSION="26.5.3"   #最新版 latest
 CADDY_VERSION="2.11.2"
 FIX_VER=1 #1，锁定。0，最新版#
 LOCAL_IP=""
-
+vultr_url="https://www.vultr.com/?ref=6999923"
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
     "www.microsoft.com"
@@ -1237,7 +1235,6 @@ main_menu() {
     # 5、当前IP地址
     #local local_ip=$(curl -4 -s --connect-timeout 2 ip.sb || curl -s --connect-timeout 2 http://ipv4.icanhazip.com || echo "获取失败")
     echo -e "   本机 IP  : ${Font_Green}${LOCAL_IP}${Font_Suffix}"  
-    
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/17   ${Font_Suffix}"
@@ -1254,8 +1251,7 @@ main_menu() {
     echo -e "${Font_Blue}  【6】 . 安装 Trojan-WS-TLS${Font_Suffix}          ${Font_Cyan}【仿HTTPS/老牌稳定】${Font_Suffix}"
     echo -e "${Font_Blue}  【7】 . 安装 Trojan-gRPC-TLS${Font_Suffix}        ${Font_Cyan}【高效转发/适合游戏】${Font_Suffix}"
     echo -e "${Font_Blue}  【8】 . 安装 VMess-WS-TLS${Font_Suffix}           ${Font_Yellow}【广泛兼容/传统方案】${Font_Suffix}"
-    echo -e "${Font_Blue}  【9】 . 安装 VMess-gRPC-TLS${Font_Suffix}         ${Font_Yellow}【兼容gRPC新特性】${Font_Suffix}"
-  
+    echo -e "${Font_Blue}  【9】 . 安装 VMess-gRPC-TLS${Font_Suffix}         ${Font_Yellow}【兼容gRPC新特性】${Font_Suffix}"  
     echo -e "-----------------------------------------------------------"
     echo -e "${Font_Magenta}  【c】 . 查看当前协议信息与链接${Font_Suffix}" 
     echo -e "${Font_Magenta}  【v】 . 查看流量统计 (vnstat)${Font_Suffix}"
@@ -1263,8 +1259,10 @@ main_menu() {
     echo -e "${Font_Green}  【d】 . 卸载与清理${Font_Suffix}"
     echo -e "${Font_Yellow}  【q】 . 退出脚本${Font_Suffix}" 
     echo -e "-----------------------------------------------------------"
-    read -p "请选择: " num
-
+    echo -e "${Font_Cyan}  【推荐】独享VPS/按时计费/随时换IP/多机房可选:VULTR机房 ${Font_Suffix}"
+    echo -e "  👉 \033]8;;${vultr_url}\033\\\\\033[31m点击此处前往https://www.vultr.com/?ref=6999923 购买VPS主机\033[0m\033]8;;\033\\\\"
+    echo -e "-----------------------------------------------------------"
+    read -p " 请选择 [1-9/a/b/c/d/q]: " num
     case "$num" in
         1) preparation_stack; gen_vless_reality_unified 1; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         2) preparation_stack; gen_vless_reality_unified 2; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
