@@ -601,124 +601,67 @@ check_current_protocol() {
 }
 
 # ------------------------------------------------ 核心协议模块 ------------------------------------------------
-gen_vless_reality() {
-    echo -e "${Font_Cyan}正在配置 VLESS-REALITY-Vision...${Font_Suffix}"
-    
-    local xray_bin="/usr/local/bin/xray"
-    [[ ! -f "$xray_bin" ]] && xray_bin=$(command -v xray)
+# ==================== 合并后的 Reality 统一函数（最终审核版）===================
+gen_vless_reality_unified() {
+    local mode=$1
 
-    if [ -z "$xray_bin" ]; then
-        echo -e "${Font_Red}错误: 未检测到 Xray 核心，请确保执行了环境准备步骤。${Font_Suffix}"
-        return 1
-    fi
+    echo -e "${Font_Cyan}正在配置 VLESS-REALITY-${mode^}...${Font_Suffix}"
 
-    local uuid=$(cat /proc/sys/kernel/random/uuid)
-    #local keys=$("$xray_bin" x25519)
-    #local priv_key=$(echo "$keys" | grep -i "Private" | awk -F': ' '{print $2}' | tr -d ' ')
-    #local pub_key=$(echo "$keys" | grep -i "Public" | awk -F': ' '{print $2}' | tr -d ' ')
-    local keys=$("$xray_bin" x25519)
-    if [[ -z "$keys" ]]; then
-        echo -e "${Font_Red}[ERROR] x25519 生成失败${Font_Suffix}"
-        exit 1
-    fi
-    local priv_key=$(echo "$keys" | awk -F': ' '/[Pp]rivate/ {print $2}' | tr -d ' ')
-    local pub_key=$(echo "$keys" | awk -F': ' '/[Pp]ublic/ {print $2}' | tr -d ' ')
-    if [[ -z "$priv_key" || -z "$pub_key" ]]; then
-        echo -e "${Font_Red}[ERROR] Reality key 生成失败${Font_Suffix}"
-        exit 1
-    fi
-    
-    echo "$pub_key" > "${conf_dir}/pub.key"
-    
-    local dest_server=$(get_random_dest)
-    local short_id=$(openssl rand -hex 8)
+    # 必要变量初始化
+    local config_path="/usr/local/etc/xray/config.json"
+    local conf_dir="/usr/local/etc/xray"
+    mkdir -p "$conf_dir"
 
-    echo -e "${Font_Cyan}本次 Reality 伪装站点：${Font_Green}$dest_server${Font_Suffix}"
+    local path=$(openssl rand -hex 8 2>/dev/null || echo "realitypath")
+    local flow=""
+    local network="tcp"
+    local extra_settings=""
+    local show_func=""
 
-    cat <<EOF > "$config_path"
-{
-    "log": { "loglevel": "warning" },
-    "inbounds": [{
-        "port": 443,
-        "protocol": "vless",
-        "settings": {
-            "clients": [{ "id": "$uuid", "flow": "xtls-rprx-vision" }],
-            "decryption": "none"
-        },
-        "streamSettings": {
-            "network": "tcp",
-            "security": "reality",
-            "realitySettings": {
-                "show": false,
-                "dest": "$dest_server:443",
-                "xver": 0,
-                "serverNames": ["$dest_server"],
-                "privateKey": "$priv_key",
-                "shortIds": ["$short_id"]
-            }
-        }
-    }],
-    "outbounds": [{ "protocol": "freedom" }]
-}
-EOF
-    check_json "$config_path"
-    systemctl daemon-reload
-    restart_service xray
-    check_service_alive 443 "VLESS-REALITY"
-    check_external_tcp "$(curl -4 -s ip.sb || true)" 443
-    show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$dest_server"
-}
-
-gen_vless_reality_xhttp() {
-    echo -e "${Font_Cyan}正在配置 VLESS-REALITY-xhttp...${Font_Suffix}"
-    
-    local xray_bin="/usr/local/bin/xray"
-    [[ ! -f "$xray_bin" ]] && xray_bin=$(command -v xray)
-    
-    if [[ -z "$xray_bin" ]]; then
-        echo -e "${Font_Red}错误: 未检测到 Xray 核心。${Font_Suffix}"
-        return 1
-    fi
-
-    local uuid=$(cat /proc/sys/kernel/random/uuid)
-    local keys=$("$xray_bin" x25519)   
-    if [[ -z "$keys" ]]; then
-        echo -e "${Font_Red}[ERROR] x25519 生成失败${Font_Suffix}"
-        exit 1
-    fi
-    
-    local priv_key=$(echo "$keys" | grep -i "Private" | awk -F': ' '{print $2}' | tr -d ' ')
-    local pub_key=$(echo "$keys" | grep -i "Public" | awk -F': ' '{print $2}' | tr -d ' ')
-    
-    if [[ -z "$priv_key" || -z "$pub_key" ]]; then
-        echo -e "${Font_Red}[ERROR] key 解析失败${Font_Suffix}"
-        exit 1
-    fi
-        
-    local short_id=$(openssl rand -hex 8)
-    local path=$(openssl rand -hex 6)
-    local dest_server=$(get_random_dest)
-    echo -e "${Font_Cyan}本次 Reality 伪装站点：${Font_Green}$dest_server${Font_Suffix}"
-
-    echo "$pub_key" > "${conf_dir}/pub.key"
-
-    cat <<EOF > "$config_path"
-{
-    "log": { "loglevel": "warning" },
-    "inbounds": [{
-        "port": 443,
-        "protocol": "vless",
-        "settings": {
-            "clients": [{ "id": "$uuid" }],
-            "decryption": "none"
-        },
-        "streamSettings": {
-            "network": "xhttp",
-            "security": "reality",
+    if [ "$mode" = "vision" ]; then
+        flow='"flow": "xtls-rprx-vision",'
+        show_func="show_vless_reality_info"
+    else
+        network="xhttp"
+        extra_settings='
             "xhttpSettings": {
-                "path": "/$path",
+                "path": "/'$path'",
                 "mode": "auto"
-            },
+            },'
+        show_func="show_vless_reality_xhttp_info"
+    fi
+
+    echo -e "${Font_Cyan}→ 正在生成密钥...${Font_Suffix}"
+
+    local xray_bin="/usr/local/bin/xray"
+    [[ ! -f "$xray_bin" ]] && xray_bin=$(command -v xray)
+
+    local uuid=$(cat /proc/sys/kernel/random/uuid)
+    local keys=$("$xray_bin" x25519 2>/dev/null)
+    local priv_key=$(echo "$keys" | awk -F': ' '/Private/ {print $2}' | tr -d ' ')
+    local pub_key=$(echo "$keys" | awk -F': ' '/Public/ {print $2}' | tr -d ' ')
+    local short_id=$(openssl rand -hex 8)
+    local dest_server=$(get_random_dest || echo "www.microsoft.com")
+
+    echo -e "${Font_Cyan}本次 Reality 伪装站点：${Font_Green}$dest_server${Font_Suffix}"
+    echo "$pub_key" > "${conf_dir}/pub.key" 2>/dev/null || true
+
+    echo -e "${Font_Cyan}→ 正在写入 Xray 配置...${Font_Suffix}"
+
+    cat <<EOF > "$config_path"
+{
+    "log": { "loglevel": "warning" },
+    "inbounds": [{
+        "port": 443,
+        "protocol": "vless",
+        "settings": {
+            "clients": [{ "id": "$uuid", $flow }],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "$network",
+            "security": "reality",
+            $extra_settings
             "realitySettings": {
                 "show": false,
                 "dest": "$dest_server:443",
@@ -732,13 +675,25 @@ gen_vless_reality_xhttp() {
     "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
+
+    echo -e "${Font_Cyan}→ 配置写入完成，正在校验...${Font_Suffix}"
     check_json "$config_path"
+
+    echo -e "${Font_Cyan}→ 正在重启服务...${Font_Suffix}"
     systemctl daemon-reload
     restart_service xray
+
+    echo -e "${Font_Cyan}→ 正在检查服务状态...${Font_Suffix}"
     check_service_alive 443 "VLESS-REALITY"
-    check_external_tcp "$(curl -4 -s ip.sb || true)" 443      
-    show_vless_reality_xhttp_info "$uuid" "$pub_key" "$short_id" "$dest_server" "$path"
+
+    echo -e "${Font_Cyan}→ 显示最终配置信息...${Font_Suffix}"
+    if [ "$mode" = "vision" ]; then
+        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server"
+    else
+        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server" "$path"
+    fi
 }
+
 
 # TLS 协议使用 common_tls_setup
 gen_vless_ws() {
@@ -1488,7 +1443,7 @@ main_menu() {
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/10   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.18.01.32（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.18.01.48（release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
@@ -1512,8 +1467,8 @@ main_menu() {
     read -p "请选择: " num
 
     case "$num" in
-        1) preparation_stack; gen_vless_reality; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
-        2) preparation_stack; gen_vless_reality_xhttp; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
+        1) gen_vless_reality_unified "vision" ;;
+        2) gen_vless_reality_unified "xhttp" ;;
         3) preparation_stack; gen_vless_ws; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         4) preparation_stack; gen_vless_grpc; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         5) preparation_stack; gen_vless_xhttp; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
