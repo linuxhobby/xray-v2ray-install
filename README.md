@@ -26,7 +26,8 @@
 ## ⚠️ 安装前准备
 
 ### 1️⃣ VPS 服务器
-- 一台带公网 IPv4 或 IPv6 的服务器，我推荐Vultr，，可以随时换vps换IP，按时计费。(https://www.vultr.com/?ref=6999923)  
+- 一台带公网 IPv4 或 IPv6 的服务器。
+- 推荐Vultr，可以随时换vps换IP，按时计费。(https://www.vultr.com/?ref=6999923)  
 
 ### 2️⃣ 域名（可选）
 - 配置 A 记录解析到服务器 IP
