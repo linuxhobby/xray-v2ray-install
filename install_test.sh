@@ -584,7 +584,7 @@ check_current_protocol() {
     elif [[ "$network" == "ws" ]]; then
         local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "ws" "$uuid" "$domain" "$path"
+            show_protocol_info "Trojan-"ws" "$uuid" "$domain" "$path"
         else
             show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
 
@@ -594,14 +594,14 @@ check_current_protocol() {
     elif [[ "$network" == "grpc" ]]; then
         local serviceName=$(grep -m1 '"serviceName":' $config_path | grep -oP '(?<="serviceName": ")[^"]+')
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "grpc" "$uuid" "$domain" "$serviceName"
+            show_protocol_info "Trojan-"grpc" "$uuid" "$domain" "$serviceName"
         else
-            show_vless_grpc_info "$uuid" "$domain" "$serviceName"
+            show_protocol_info "VLESS-gRPC" "$uuid" "$domain" "$serviceName"
         fi
 
     elif [[ "$network" == "xhttp" ]]; then
         local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-        show_vless_xhttp_info "$uuid" "$domain" "$path"
+        show_protocol_info "VLESS-XHTTP" "$uuid" "$domain" "$path"
 
     else
         echo -e "${Font_Red}未能识别协议类型。${Font_Suffix}"
@@ -804,7 +804,7 @@ EOF
     sleep 2
     check_service_alive $port "VLESS-gRPC"
     check_external_tcp "$domain" 443    
-    show_vless_grpc_info "$uuid" "$domain" "$serviceName"
+    show_protocol_info "VLESS-gRPC" "$uuid" "$domain" "$serviceName"
 }
 
 gen_vless_xhttp() {
@@ -859,7 +859,7 @@ EOF
     sleep 2
     check_service_alive $port "VLESS-XHTTP"
     check_external_tcp "$domain" 443        
-    show_vless_xhttp_info "$uuid" "$domain" "$path"
+    show_protocol_info "VLESS-XHTTP" "$uuid" "$domain" "$path"
 }
 
 gen_trojan_ws() {
@@ -923,7 +923,7 @@ EOF
     check_external_tcp "$domain" 443       
     
     # 调用展示函数：传入所有必要参数
-    show_trojan_info "ws" "$pass" "$domain" "$path"
+    show_protocol_info "Trojan-"ws" "$pass" "$domain" "$path"
 }
 
 gen_trojan_grpc() {
@@ -938,10 +938,10 @@ gen_trojan_grpc() {
     install_caddy 
     common_tls_setup
     
-    local pass
+    local pass=""
     read -p "请输入 Trojan 密码 (默认随机): " pass
     [[ -z "$pass" ]] && pass=$(openssl rand -hex 6)
-    
+
     local serviceName=$(openssl rand -hex 4)
     local port=10005
     check_port $port
@@ -993,7 +993,7 @@ EOF
     check_external_tcp "$domain" 443      
     
     # 【核心修改】显式传参给信息展示函数
-    show_trojan_info "grpc" "$pass" "$domain" "$serviceName"
+    show_protocol_info "Trojan-"grpc" "$pass" "$domain" "$serviceName"
 }
 
 gen_vmess_ws() {
