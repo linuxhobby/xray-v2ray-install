@@ -66,7 +66,7 @@ XRAY_VERSION="26.5.3"   #最新版 latest
 CADDY_VERSION="2.11.2"
 FIX_VER=1 #1，锁定。0，最新版#
 LOCAL_IP=""
-
+vultr_url="https://www.vultr.com/?ref=6999923"
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
     "www.microsoft.com"
@@ -1261,7 +1261,11 @@ main_menu() {
     echo -e "${Font_Green}  【d】 . 卸载与清理${Font_Suffix}"
     echo -e "${Font_Yellow}  【q】 . 退出脚本${Font_Suffix}" 
     echo -e "-----------------------------------------------------------"
-    read -p "请选择: " num
+    local vultr_url="https://www.vultr.com/?ref=6999923"
+    echo -e "${Font_Cyan}  【推荐】独享VPS/按时计费/随时换IP/多机房可选:VULTR机房 ${Font_Suffix}"
+    echo -e "  👉 \033]8;;${vultr_url}\033\\\\\033[31m点击此处前往https://www.vultr.com/?ref=6999923 购买VPS主机\033[0m\033]8;;\033\\\\"
+    echo -e "-----------------------------------------------------------"
+    read -p " 请选择 [1-9/a/b/c/d/q]: " num
 
     case "$num" in
         1) preparation_stack; gen_vless_reality_unified 1; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
