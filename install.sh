@@ -2,8 +2,10 @@
 
 # ====================================================
 # 作者: 人生若只如初见
-# https://www.vultr.com/?ref=9698050-9J
-
+#   Tell A Friend about Vultr and Earn up to $100 for referring clients!
+#   https://www.vultr.com/?ref=9698050-9J
+#   Refer Vultr.com and earn $10 per paid signup!
+#   https://www.vultr.com/?ref=6999923
 # Release、Standard、Snapshot、Staging
 # 支持以下协议矩阵一键自动安装
 #  【1】 . 安装 VLESS-REALITY-Vision
