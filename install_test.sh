@@ -104,8 +104,17 @@ check_command() {
 
 setup_xray_user() {
     useradd -r -s /bin/false -U xray 2>/dev/null || true
+    
+    # 配置目录
     mkdir -p "$conf_dir"
     chown -R xray:xray "$conf_dir" 2>/dev/null || true
+    
+    # 【关键修复】日志目录 + 权限
+    mkdir -p /var/log/xray
+    chown -R xray:xray /var/log/xray
+    chmod 700 /var/log/xray
+    
+    echo -e "${Font_Green}[OK] xray 用户及日志目录权限已准备完成${Font_Suffix}"
 }
 
 # 自定义函数：TLS 类协议公共准备（减少少量重复）
@@ -115,12 +124,21 @@ common_tls_setup() {
 
 restart_service() {
     local svc=$1
+    echo -e "${Font_Cyan}→ 正在重启 ${svc} 服务...${Font_Suffix}"
+    
+    systemctl daemon-reload
     systemctl restart "$svc"
+    sleep 1.5
+    
     if ! systemctl is-active --quiet "$svc"; then
-        echo -e "${Font_Red}[ERROR] $svc 启动失败${Font_Suffix}"
-        systemctl status "$svc" --no-pager
+        echo -e "${Font_Red}[ERROR] ${svc} 启动失败${Font_Suffix}"
+        echo -e "${Font_Red}详细状态：${Font_Suffix}"
+        systemctl status "$svc" --no-pager -l
+        echo -e "${Font_Red}最近日志：${Font_Suffix}"
+        journalctl -u "$svc" -n 30 --no-pager
         exit 1
     fi
+    echo -e "${Font_Green}[OK] ${svc} 启动成功${Font_Suffix}"
 }
 
 #自定义函数：JSON 校验函数
@@ -507,7 +525,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=${conf_dir}
+ReadWritePaths=${conf_dir} /var/log
 Restart=on-failure
 RestartPreventExitStatus=23
 LimitNPROC=10000
@@ -822,9 +840,7 @@ install_tls_protocol() {
     cat <<EOF > "$config_path"
 {
     "log": { 
-        "loglevel": "error",
-        "access": "/var/log/xray/access.log",
-        "error": "/var/log/xray/error.log"
+        "loglevel": "error"
     },
     "inbounds": [{
         "port": $port,
@@ -839,41 +855,45 @@ install_tls_protocol() {
     "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
+
     echo -e "${Font_Cyan}→ Xray 配置已写入${Font_Suffix}"
-    # ==================== Caddy 配置（关键修复：xhttp 与 grpc 同等待遇）===================
+    # ==================== Caddy 配置（WS Matcher 最终版）===================
+    # ==================== Caddy 配置（WS 最终可靠版）===================
     local caddyfile="/etc/caddy/Caddyfile"
-   
-    if [ "$transport" = "grpc" ] || [ "$transport" = "xhttp" ]; then
-        cat > "$caddyfile" << EOF
+    
+    cat > "$caddyfile" << EOF
 $domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy localhost:$port {
-        transport http {
-            versions h2c
+
+    # WebSocket 专用处理
+    handle_path /$path_or_service* {
+        reverse_proxy 127.0.0.1:$port {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            # 关键：强制支持 WebSocket Upgrade
+            flush_interval -1
         }
     }
-}
-EOF
-    else
-        cat > "$caddyfile" << EOF
-$domain {
-    tls {
-        protocols tls1.2 tls1.3
+
+    # 其他请求全部拒绝（安全）
+    handle {
+        abort
     }
-    reverse_proxy /$path_or_service 127.0.0.1:$port
 }
 EOF
-    fi
-    echo -e "${Font_Cyan}→ Caddy 配置已写入${Font_Suffix}"
+    echo -e "${Font_Cyan}→ Caddy 配置已写入（WS 可靠版）${Font_Suffix}"
+    
     # ==================== 校验 ====================
     check_caddy || { echo -e "${Font_Red}[ERROR] Caddy 配置校验失败${Font_Suffix}"; return 1; }
     check_json "$config_path" || { echo -e "${Font_Red}[ERROR] Xray JSON 配置错误${Font_Suffix}"; return 1; }
     # ==================== 重启服务 ====================
     restart_service caddy || { echo -e "${Font_Red}[ERROR] Caddy 启动失败${Font_Suffix}"; return 1; }
     restart_service xray || { echo -e "${Font_Red}[ERROR] Xray 启动失败${Font_Suffix}"; return 1; }
-    sleep 1.5
+    sleep 2   # 增加等待时间
     check_service_alive $port "$proto_name"
     check_external_tcp "$domain" 443
     # ==================== 显示信息 ====================
@@ -955,7 +975,9 @@ show_tls_info() {
 show_vless_ws_info() {
     local uuid=$1 domain=$2 path=$3
     local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=ws&host=$domain&path=%2F$path#$ps_name"
+    
+    # 加强版分享链接
+    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=ws&host=$domain&path=%2F$path&sni=$domain&fp=chrome&alpn=http/1.1#$ps_name"
 
     echo -e "${Font_Green}VLESS-WS-TLS 安装成功！${Font_Suffix}"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
@@ -1244,7 +1266,7 @@ main_menu() {
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/17   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.17.21.03（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.17.21.36（release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
