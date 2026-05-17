@@ -574,9 +574,11 @@ check_current_protocol() {
         
         if grep -q "xhttpSettings" $config_path; then
             local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-            show_vless_reality_xhttp_info "$uuid" "$pub_key" "$short_id" "$sni" "$path"
+            show_protocol_info "REALITY-xHTTP" "$uuid" "$sni" "$pub_key" "$short_id" "$path"
         else
-            show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$sni"
+            show_protocol_info "REALITY-Vision" "$uuid" "$sni" "$pub_key" "$short_id"
+
+
         fi
 
     elif [[ "$network" == "ws" ]]; then
@@ -584,7 +586,9 @@ check_current_protocol() {
         if grep -q '"protocol": "trojan"' $config_path; then
             show_trojan_info "ws" "$uuid" "$domain" "$path"
         else
-            show_vless_ws_info "$uuid" "$domain" "$path"
+            show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
+
+
         fi
 
     elif [[ "$network" == "grpc" ]]; then
@@ -677,12 +681,13 @@ EOF
     restart_service xray
     check_service_alive 443 "VLESS-REALITY"
     check_external_tcp "$(curl -4 -s ip.sb || true)" 443
-
+    
     if [ "$mode" = "vision" ]; then
-        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server"
+        show_protocol_info "REALITY-Vision" "$uuid" "$dest_server" "$pub_key" "$short_id"
     else
-        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server" "$path"
+        show_protocol_info "REALITY-xHTTP" "$uuid" "$dest_server" "$pub_key" "$short_id" "$path"
     fi
+    
 }
 
 
@@ -740,7 +745,8 @@ EOF
     echo -e "${Font_Cyan}请稍等，生成中...${Font_Suffix}"
     sleep 2
     check_service_alive $port "VLESS-WS"    
-    show_vless_ws_info "$uuid" "$domain" "$path"
+    show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
+
 }
 
 gen_vless_grpc() {
@@ -1106,175 +1112,49 @@ EOF
 }
 
 # ------------------------------------------------ 信息展示模块（完全保留）------------------------------------------------
-show_vless_reality_info() {
-    local uuid=$1 pub_key=$2 short_id=$3 sni=$4
-    local ip=$(curl -4 -s ip.sb 2>/dev/null || echo "你的IP")
-    local ps_name="REALITY-Vision_${sni}_$(date +%Y%m%d)"
+# ==================== 【合并版】通用分享链接展示函数 ====================
+show_protocol_info() {
+    local protocol_type=$1   # vision / xhttp / ws / grpc / trojan 等
+    local uuid=$2
+    local extra1=$3
+    local extra2=$4
+    local extra3=$5
+    local extra4=$6
 
-    local link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=tcp#$ps_name"
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="${protocol_type}_${extra1}_$(date +%Y%m%d)"
 
-    echo -e "${Font_Green}VLESS-REALITY-Vision 安装成功！${Font_Suffix}"
+    local link=""
+
+    case "$protocol_type" in
+        "REALITY-Vision")
+            link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=tcp#$ps_name"
+            ;;
+        "REALITY-xHTTP")
+            link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=xhttp&path=%2F$extra4#$ps_name"
+            ;;
+        "VLESS-WS"|"Trojan-WS")
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=ws&host=$extra1&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=http/1.1#$ps_name"
+            ;;
+        "VLESS-gRPC"|"Trojan-gRPC")
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=grpc&host=$extra1&serviceName=$extra2&sni=$extra1&fp=chrome&alpn=h2#$ps_name"
+            ;;
+        *)
+            link="vless://$uuid@$ip:443?encryption=none&security=tls&type=$protocol_type#$ps_name"
+            ;;
+    esac
+
+    echo -e "${Font_Green}${protocol_type} 安装成功！${Font_Suffix}"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
     echo -e "${Font_Cyan}地址:${Font_Suffix} $ip"
-    echo -e "${Font_Cyan}SNI:${Font_Suffix} $sni"
-    echo -e "${Font_Cyan}公钥:${Font_Suffix} $pub_key"
-    echo -e "${Font_Cyan}ShortID:${Font_Suffix} $short_id"
-    echo -e "${Font_Red}分享链接:${Font_Suffix} $link"
-    show_qr_code "$link"
-}
-
-show_vless_reality_xhttp_info() {
-    local uuid=$1 pub_key=$2 short_id=$3 sni=$4 path=$5
-    local ip=$(curl -4 -s ip.sb 2>/dev/null || echo "你的IP")
-    local ps_name="REALITY-xHTTP_${sni}_$(date +%Y%m%d)"
-
-    # 强制确保 type=xhttp
-    local link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=xhttp&path=%2F$path#$ps_name"
-
-    echo -e "${Font_Green}VLESS-REALITY-xhttp 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}地址 (IPv4):${Font_Suffix} $ip"
-    echo -e "${Font_Cyan}SNI:${Font_Suffix} $sni"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}公钥 (pbk):${Font_Suffix} $pub_key"
-    echo -e "${Font_Cyan}ShortID:${Font_Suffix} $short_id"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}分享链接:${Font_Suffix}"
     echo "$link"
     show_qr_code "$link"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
 }
 
-show_vless_ws_info() {
-    local uuid=$1 domain=$2 path=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=ws&host=$domain&path=%2F$path#$ps_name"
 
-    echo -e "${Font_Green}VLESS-WS-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}端口:${Font_Suffix} 443 (TLS)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_vless_grpc_info() {
-    local uuid=$1 domain=$2 serviceName=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=grpc&serviceName=$serviceName&sni=$domain#$ps_name"
-
-    echo -e "${Font_Green}VLESS-gRPC-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}ServiceName:${Font_Suffix} $serviceName"
-    echo -e "${Font_Cyan}端口:${Font_Suffix} 443 (TLS)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_vless_xhttp_info() {
-    local uuid=$1 domain=$2 path=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=xhttp&path=%2F$path&sni=$domain#$ps_name"
-
-    echo -e "${Font_Green}VLESS-XHTTP-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}模式:${Font_Suffix} auto (建议客户端手动选 auto)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_trojan_info() {
-    local type=$1
-    local pass=$2
-    local dom=$3
-    local path_or_service=$4
-    local link=""
-
-    if [[ "$type" == "ws" ]]; then
-        # 拼接 Trojan-WS 链接
-        link="trojan://${pass}@${dom}:443?security=tls&type=ws&sni=${dom}&path=%2f${path_or_service}#Trojan_WS_${dom}"
-    elif [[ "$type" == "grpc" ]]; then
-        # 拼接 Trojan-gRPC 链接
-        link="trojan://${pass}@${dom}:443?security=tls&encryption=none&type=grpc&serviceName=${path_or_service}&sni=${dom}#Trojan_gRPC_${dom}"
-    fi
-
-    echo -e "\n${Font_Green}---------- Trojan 配置信息 ----------${Font_Suffix}"
-    echo -e "${Font_Cyan}协议类型    :${Font_Suffix} Trojan-${type}"
-    echo -e "${Font_Cyan}地址 (Address):${Font_Suffix} ${dom}"
-    echo -e "${Font_Cyan}端口 (Port)   :${Font_Suffix} 443"
-    echo -e "${Font_Cyan}密码 (Password):${Font_Suffix} ${pass}"
-    echo -e "${Font_Cyan}传输协议 (Net):${Font_Suffix} ${type}"
-    echo -e "${Font_Cyan}路径/服务名   :${Font_Suffix} ${path_or_service}"
-    echo -e "${Font_Cyan}TLS/SNI       :${Font_Suffix} ${dom}"
-    echo -e "${Font_Green}-------------------------------------${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "${Font_Yellow}${link}${Font_Suffix}"
-    echo -e "${Font_Green}-------------------------------------${Font_Suffix}\n"
-    show_qr_code "$link"
-}
-
-# VMess 展示函数（完全保留）
-display_config_board() {
-    local p_name=$1 p_link=$2
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    echo -e "  协议类型    :  ${Font_Cyan}${p_name}${Font_Suffix}"
-    echo -e "  地址 (Addr) :  ${Font_Cyan}${DOMAIN}${Font_Suffix}"
-    echo -e "  端口 (Port) :  ${Font_Cyan}443${Font_Suffix}"
-    echo -e "  用户ID(UUID):  ${Font_Cyan}${UUID}${Font_Suffix}"
-    if [[ -n "$WPATH" ]]; then
-        echo -e "  路径 (Path) :  ${Font_Cyan}/${WPATH}${Font_Suffix}"
-    fi
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    echo -e "  分享链接: ${Font_Red}${p_link}${Font_Suffix}"
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    show_qr_code "$p_link"
-}
-
-show_vmess_ws_info() {
-    local domain_name="${DOMAIN:-域名未设置}"
-    local uuid_val="${UUID:-UUID未生成}"
-    local path_val="${WPATH:-path}"
-    local vmess_json=$(cat <<EOF
-{
-  "v": "2", "ps": "${domain_name}_WS", "add": "${domain_name}", "port": "443", "id": "${uuid_val}",
-  "aid": "0", "net": "ws", "path": "/${path_val}", "type": "none", "host": "${domain_name}", "tls": "tls"
-}
-EOF
-)
-    local v_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
-    display_config_board "VMess-WS-TLS" "$v_link"
-}
-
-show_vmess_grpc_info() {
-    local domain_name="${DOMAIN:-域名未设置}"
-    local uuid_val="${UUID:-UUID未生成}"
-    local path_val="${WPATH:-path}"
-    local vmess_json=$(cat <<EOF
-{
-  "v": "2", "ps": "${domain_name}_gRPC", "add": "${domain_name}", "port": "443", "id": "${uuid_val}",
-  "aid": "0", "net": "grpc", "path": "${path_val}", "type": "none", "host": "${domain_name}", "tls": "tls"
-}
-EOF
-)
-    local v_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
-    display_config_board "VMess-gRPC-TLS" "$v_link"
-}
+#合并所有show代码结束
 
 show_qr_code() {
     local link=$1
@@ -1436,7 +1316,7 @@ main_menu() {
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/10   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.18.02.33（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.18.02.49（release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
