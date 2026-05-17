@@ -7,7 +7,7 @@
 - 2026/05/09：增加安装过程中可能出现的错误提示，优化代码。
 - 2026/05/10：增加BBR安装菜单，增加防火墙智能策略，修复可能出现的错误提示，优化代码。
 - 2026/05/15：合并gen_vless_reality,gen_vless_reality_xhttp函数，优化代码。
-
+- 2026/05/17：修复check_current_protocol函数。
 ## 📖 项目介绍
 # 🚀 Xray 一键安装脚本
 > 基于 **Xray + Caddy** 的多协议一键部署脚本，快速部署 Xray 服务端，集成 Caddy 自动配置 TLS，支持 Reality / WS / gRPC / XHTTP / Trojan / VMess 等多种主流协议，开箱即用。
