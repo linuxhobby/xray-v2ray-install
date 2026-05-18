@@ -1512,7 +1512,7 @@ echo -e "${Font_Magenta}======================= 系统状态检查 =============
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/18   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.18.14.13（Release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.18.16.23（Release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
