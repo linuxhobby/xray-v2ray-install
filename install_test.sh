@@ -78,7 +78,7 @@ get_random_dest() {
     local idx=$((RANDOM % ${#REALITY_DEST_OPTIONS[@]}))
     echo "${REALITY_DEST_OPTIONS[$idx]}"
 }
-# 自定义函数：检查当前用户root
+# 自定义函数：检查当前 user root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo -e "${Font_Red}必须以 root 权限运行此脚本！${Font_Suffix}"
@@ -268,7 +268,7 @@ enable_bbr() {
     if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
         echo -e "${Font_Green}[INFO] BBR 加速已在运行中，无需重复开启。${Font_Suffix}"
     else
-        echo -e "${Font_Yellow}[ACTION] 正在写入 BBR 配置...${Font_Suffix}"
+        echo -e "${Font_Yellow}[ACTION] 正在写入 BBR配置...${Font_Suffix}"
         
         # 2. 备份 sysctl.conf 以防万一
         cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -545,7 +545,7 @@ check_domain() {
     done
 }
 
-# --- 查看当前协议（完全保留）---
+# --- 查看当前协议（修正了语法断裂大括号）---
 check_current_protocol() {
     if [[ ! -f $config_path ]]; then
         echo -e "${Font_Red}错误: 未检测到配置文件 ($config_path)，请先安装协议。${Font_Suffix}"
@@ -577,24 +577,20 @@ check_current_protocol() {
             show_protocol_info "REALITY-xHTTP" "$uuid" "$sni" "$pub_key" "$short_id" "$path"
         else
             show_protocol_info "REALITY-Vision" "$uuid" "$sni" "$pub_key" "$short_id"
-
-
         fi
 
     elif [[ "$network" == "ws" ]]; then
         local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_protocol_info "Trojan-"ws" "$uuid" "$domain" "$path"
+            show_protocol_info "Trojan-ws" "$uuid" "$domain" "$path"
         else
             show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
-
-
         fi
 
     elif [[ "$network" == "grpc" ]]; then
         local serviceName=$(grep -m1 '"serviceName":' $config_path | grep -oP '(?<="serviceName": ")[^"]+')
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_protocol_info "Trojan-"grpc" "$uuid" "$domain" "$serviceName"
+            show_protocol_info "Trojan-grpc" "$uuid" "$domain" "$serviceName"
         else
             show_protocol_info "VLESS-gRPC" "$uuid" "$domain" "$serviceName"
         fi
@@ -823,6 +819,7 @@ gen_vless_xhttp() {
 
     echo -e "${Font_Cyan}正在配置 VLESS-XHTTP-TLS...${Font_Suffix}"
 
+    # 修改点 1：明确指定 XHTTP 的工作模式为 auto
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -837,7 +834,8 @@ gen_vless_xhttp() {
         "streamSettings": { 
             "network": "xhttp", 
             "xhttpSettings": { 
-                "path": "/$path"
+                "path": "/$path",
+                "mode": "auto"
             } 
         }
     }],
@@ -845,12 +843,19 @@ gen_vless_xhttp() {
 }
 EOF
 
+    # 修改点 2：优化 Caddyfile 反代参数，强制开启 h2c 并禁用响应缓冲（核心修复）
     echo "$domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy 127.0.0.1:$port
+    reverse_proxy 127.0.0.1:$port {
+        transport http {
+            versions h2c
+        }
+        flush_interval -1
+    }
 }" > /etc/caddy/Caddyfile
+
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -923,7 +928,7 @@ EOF
     check_external_tcp "$domain" 443       
     
     # 调用展示函数：传入所有必要参数
-    show_protocol_info "Trojan-"ws" "$pass" "$domain" "$path"
+    show_protocol_info "Trojan-ws" "$pass" "$domain" "$path"
 }
 
 gen_trojan_grpc() {
@@ -993,7 +998,7 @@ EOF
     check_external_tcp "$domain" 443      
     
     # 【核心修改】显式传参给信息展示函数
-    show_protocol_info "Trojan-"grpc" "$pass" "$domain" "$serviceName"
+    show_protocol_info "Trojan-grpc" "$pass" "$domain" "$serviceName"
 }
 
 gen_vmess_ws() {
@@ -1126,20 +1131,37 @@ show_protocol_info() {
 
     local link=""
 
-    case "$protocol_type" in
+case "$protocol_type" in
         "REALITY-Vision")
+            # 协议1：VLESS-REALITY-Vision
             link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=tcp#$ps_name"
             ;;
         "REALITY-xHTTP")
+            # 协议2：VLESS-REALITY-xhttp
             link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=xhttp&path=%2F$extra4#$ps_name"
             ;;
-        "VLESS-WS"|"Trojan-WS")
+        "VLESS-XHTTP")
+            # 协议5：VLESS-XHTTP-TLS (修复重点：精准指定传输类型为 xhttp 并带上 path)
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=xhttp&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=h2%2Chttp%2F1.1#$ps_name"
+            ;;
+        "VLESS-WS")
+            # 协议3：VLESS-WS-TLS
             link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=ws&host=$extra1&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=http/1.1#$ps_name"
             ;;
-        "VLESS-gRPC"|"Trojan-gRPC")
+        "VLESS-gRPC")
+            # 协议4：VLESS-gRPC-TLS
             link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=grpc&host=$extra1&serviceName=$extra2&sni=$extra1&fp=chrome&alpn=h2#$ps_name"
             ;;
+        "Trojan-WS")
+            # 协议6：Trojan-WS-TLS (修复重点：Trojan 协议前缀为 trojan:// 且无 encryption 参数)
+            link="trojan://$uuid@$extra1:443?security=tls&type=ws&host=$extra1&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=http/1.1#$ps_name"
+            ;;
+        "Trojan-gRPC")
+            # 协议7：Trojan-gRPC-TLS (修复重点：Trojan 协议前缀为 trojan:// 且无 encryption 参数)
+            link="trojan://$uuid@$extra1:443?security=tls&type=grpc&host=$extra1&serviceName=$extra2&sni=$extra1&fp=chrome&alpn=h2#$ps_name"
+            ;;
         *)
+            # 兜底通用逻辑
             link="vless://$uuid@$ip:443?encryption=none&security=tls&type=$protocol_type#$ps_name"
             ;;
     esac
@@ -1164,6 +1186,79 @@ show_qr_code() {
     else
         echo -e "${Font_Red}提示: qrencode 未安装，无法生成二维码。${Font_Suffix}"
     fi
+}
+
+# === 完完整整地补回被删除的 VMess 展现函数，保持你原本的风格定义变量和输出 ===
+show_vmess_ws_info() {
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="VMess_WS_${DOMAIN}_$(date +%Y%m%d)"
+    
+    local vmess_json=$(cat <<EOF
+{
+  "v": "2",
+  "ps": "${ps_name}",
+  "add": "${DOMAIN}",
+  "port": "443",
+  "id": "${UUID}",
+  "aid": "0",
+  "scy": "auto",
+  "net": "ws",
+  "type": "none",
+  "host": "${DOMAIN}",
+  "path": "/${WPATH}",
+  "tls": "tls",
+  "sni": "${DOMAIN}",
+  "alpn": "http/1.1"
+}
+EOF
+)
+    local b64_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
+
+    echo -e "${Font_Green}VMess-WS-TLS 安装成功！${Font_Suffix}"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+    echo -e "${Font_Cyan}域名:${Font_Suffix} $DOMAIN"
+    echo -e "${Font_Cyan}UUID:${Font_Suffix} $UUID"
+    echo -e "${Font_Cyan}路径:${Font_Suffix} /$WPATH"
+    echo -e "${Font_Red}分享链接:${Font_Suffix}"
+    echo "$b64_link"
+    show_qr_code "$b64_link"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+}
+
+show_vmess_grpc_info() {
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="VMess_gRPC_${DOMAIN}_$(date +%Y%m%d)"
+    
+    local vmess_json=$(cat <<EOF
+{
+  "v": "2",
+  "ps": "${ps_name}",
+  "add": "${DOMAIN}",
+  "port": "443",
+  "id": "${UUID}",
+  "aid": "0",
+  "scy": "auto",
+  "net": "grpc",
+  "type": "none",
+  "host": "${DOMAIN}",
+  "path": "${WPATH}",
+  "tls": "tls",
+  "sni": "${DOMAIN}",
+  "alpn": "h2"
+}
+EOF
+)
+    local b64_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
+
+    echo -e "${Font_Green}VMess-gRPC-TLS 安装成功！${Font_Suffix}"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+    echo -e "${Font_Cyan}域名:${Font_Suffix} $DOMAIN"
+    echo -e "${Font_Cyan}UUID:${Font_Suffix} $UUID"
+    echo -e "${Font_Cyan}服务名:${Font_Suffix} $WPATH"
+    echo -e "${Font_Red}分享链接:${Font_Suffix}"
+    echo "$b64_link"
+    show_qr_code "$b64_link"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
 }
 
 show_usage() {
