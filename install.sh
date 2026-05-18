@@ -2,7 +2,6 @@
 
 # ====================================================
 # 作者: 人生若只如初见
-# 更新：2026/05/10
 # Release、Standard、Snapshot、Staging
 # 支持以下协议矩阵一键自动安装
 #  【1】 . 安装 VLESS-REALITY-Vision
@@ -21,7 +20,9 @@
 #   2026/05/07：1、增加VLESS-REALITY-xhttp协议。2、修复当前协议判断，更详细。
 #   2026/05/08：增加各种验证、排错、去掉apt lock暴力解决，修改安全性配置。
 #   2026/05/09：优化代码，增加安装过程中可能出现的错误提示。
-
+#   2026/05/10：增加BBR安装菜单，增加防火墙智能策略，修复可能出现的错误提示，优化代码。
+#   2026/05/15：合并gen_vless_reality,gen_vless_reality_xhttp函数为gen_vless_reality_unified函数，优化代码。
+#   2026/05/17：修复check_current_protocol函数。
 # ====================================================
 # 终端颜色定义
 Font_Black="\033[30m"   # 黑色
@@ -57,7 +58,7 @@ trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 $LINENO 行执行失败！\n出
 is_core="xray"
 conf_dir="/usr/local/etc/xray"
 config_path="${conf_dir}/config.json"
-PRESET_DOMAIN="vcc.myvpsworld.top" #如果为空，安装过程中手动输入
+PRESET_DOMAIN="" #如果为空，安装过程中手动输入
 XRAY_VERSION="26.5.3"   #最新版 latest
 CADDY_VERSION="2.11.2"
 FIX_VER=1 #1，锁定。0，最新版#
@@ -78,7 +79,7 @@ get_random_dest() {
     local idx=$((RANDOM % ${#REALITY_DEST_OPTIONS[@]}))
     echo "${REALITY_DEST_OPTIONS[$idx]}"
 }
-# 自定义函数：检查当前用户root
+# 自定义函数：检查当前 user root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo -e "${Font_Red}必须以 root 权限运行此脚本！${Font_Suffix}"
@@ -268,7 +269,7 @@ enable_bbr() {
     if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
         echo -e "${Font_Green}[INFO] BBR 加速已在运行中，无需重复开启。${Font_Suffix}"
     else
-        echo -e "${Font_Yellow}[ACTION] 正在写入 BBR 配置...${Font_Suffix}"
+        echo -e "${Font_Yellow}[ACTION] 正在写入 BBR配置...${Font_Suffix}"
         
         # 2. 备份 sysctl.conf 以防万一
         cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -545,7 +546,7 @@ check_domain() {
     done
 }
 
-# --- 查看当前协议（完全保留）---
+# --- 查看当前协议（修正了语法断裂大括号）---
 check_current_protocol() {
     if [[ ! -f $config_path ]]; then
         echo -e "${Font_Red}错误: 未检测到配置文件 ($config_path)，请先安装协议。${Font_Suffix}"
@@ -574,30 +575,44 @@ check_current_protocol() {
         
         if grep -q "xhttpSettings" $config_path; then
             local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-            show_vless_reality_xhttp_info "$uuid" "$pub_key" "$short_id" "$sni" "$path"
+            show_protocol_info "REALITY-xHTTP" "$uuid" "$sni" "$pub_key" "$short_id" "$path"
         else
-            show_vless_reality_info "$uuid" "$pub_key" "$short_id" "$sni"
+            show_protocol_info "REALITY-Vision" "$uuid" "$sni" "$pub_key" "$short_id"
         fi
 
     elif [[ "$network" == "ws" ]]; then
         local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
+        
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "ws" "$uuid" "$domain" "$path"
+            show_protocol_info "Trojan-WS" "$uuid" "$domain" "$path"
+        elif grep -q '"protocol": "vmess"' $config_path; then
+            # VMess-WS 使用专用函数
+            export DOMAIN="$domain"
+            export UUID="$uuid"
+            export WPATH="$path"
+            show_vmess_ws_info
         else
-            show_vless_ws_info "$uuid" "$domain" "$path"
+            show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
         fi
 
     elif [[ "$network" == "grpc" ]]; then
         local serviceName=$(grep -m1 '"serviceName":' $config_path | grep -oP '(?<="serviceName": ")[^"]+')
+        
         if grep -q '"protocol": "trojan"' $config_path; then
-            show_trojan_info "grpc" "$uuid" "$domain" "$serviceName"
+            show_protocol_info "Trojan-gRPC" "$uuid" "$domain" "$serviceName"
+        elif grep -q '"protocol": "vmess"' $config_path; then
+            # VMess-gRPC 使用专用函数
+            export DOMAIN="$domain"
+            export UUID="$uuid"
+            export WPATH="$serviceName"
+            show_vmess_grpc_info
         else
-            show_vless_grpc_info "$uuid" "$domain" "$serviceName"
+            show_protocol_info "VLESS-gRPC" "$uuid" "$domain" "$serviceName"
         fi
 
     elif [[ "$network" == "xhttp" ]]; then
         local path=$(grep -m1 '"path":' $config_path | grep -oP '(?<="path": "/)[^"]+')
-        show_vless_xhttp_info "$uuid" "$domain" "$path"
+        show_protocol_info "VLESS-XHTTP" "$uuid" "$domain" "$path"
 
     else
         echo -e "${Font_Red}未能识别协议类型。${Font_Suffix}"
@@ -677,12 +692,13 @@ EOF
     restart_service xray
     check_service_alive 443 "VLESS-REALITY"
     check_external_tcp "$(curl -4 -s ip.sb || true)" 443
-
+    
     if [ "$mode" = "vision" ]; then
-        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server"
+        show_protocol_info "REALITY-Vision" "$uuid" "$dest_server" "$pub_key" "$short_id"
     else
-        $show_func "$uuid" "$pub_key" "$short_id" "$dest_server" "$path"
+        show_protocol_info "REALITY-xHTTP" "$uuid" "$dest_server" "$pub_key" "$short_id" "$path"
     fi
+    
 }
 
 
@@ -740,7 +756,8 @@ EOF
     echo -e "${Font_Cyan}请稍等，生成中...${Font_Suffix}"
     sleep 2
     check_service_alive $port "VLESS-WS"    
-    show_vless_ws_info "$uuid" "$domain" "$path"
+    show_protocol_info "VLESS-WS" "$uuid" "$domain" "$path"
+
 }
 
 gen_vless_grpc() {
@@ -798,7 +815,7 @@ EOF
     sleep 2
     check_service_alive $port "VLESS-gRPC"
     check_external_tcp "$domain" 443    
-    show_vless_grpc_info "$uuid" "$domain" "$serviceName"
+    show_protocol_info "VLESS-gRPC" "$uuid" "$domain" "$serviceName"
 }
 
 gen_vless_xhttp() {
@@ -817,6 +834,7 @@ gen_vless_xhttp() {
 
     echo -e "${Font_Cyan}正在配置 VLESS-XHTTP-TLS...${Font_Suffix}"
 
+    # 修改点 1：明确指定 XHTTP 的工作模式为 auto
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -831,7 +849,8 @@ gen_vless_xhttp() {
         "streamSettings": { 
             "network": "xhttp", 
             "xhttpSettings": { 
-                "path": "/$path"
+                "path": "/$path",
+                "mode": "auto"
             } 
         }
     }],
@@ -839,12 +858,19 @@ gen_vless_xhttp() {
 }
 EOF
 
+    # 修改点 2：优化 Caddyfile 反代参数，强制开启 h2c 并禁用响应缓冲（核心修复）
     echo "$domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy 127.0.0.1:$port
+    reverse_proxy 127.0.0.1:$port {
+        transport http {
+            versions h2c
+        }
+        flush_interval -1
+    }
 }" > /etc/caddy/Caddyfile
+
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -853,12 +879,13 @@ EOF
     sleep 2
     check_service_alive $port "VLESS-XHTTP"
     check_external_tcp "$domain" 443        
-    show_vless_xhttp_info "$uuid" "$domain" "$path"
+    show_protocol_info "VLESS-XHTTP" "$uuid" "$domain" "$path"
 }
 
+
+# 协议 6 
 gen_trojan_ws() {
     check_domain
-    # 确保从临时文件读取域名，并定义为局部变量
     local domain=$(cat /tmp/domain 2>/dev/null || echo "")
     [[ -z "$domain" ]] && {
         echo -e "${Font_Red}[ERROR] domain 为空，请检查域名配置${Font_Suffix}"
@@ -868,61 +895,62 @@ gen_trojan_ws() {
     install_caddy
     common_tls_setup
     
-    # 密码处理
     local pass
-    read -p "请输入 Trojan 密码 (默认随机): " pass
+    read -p "请输入 Trojan 密码 (默认随机6位hex): " pass
     [[ -z "$pass" ]] && pass=$(openssl rand -hex 6)
     
-    local path=$(openssl rand -hex 6)
+    local path=$(openssl rand -hex 8)
     local port=10004
-    check_port $port
 
-    # 生成 Xray 配置
+    echo -e "${Font_Cyan}正在配置 Trojan-WS-TLS...${Font_Suffix}"
+
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
     "inbounds": [{
-        "port": $port, 
-        "listen": "127.0.0.1", 
+        "port": $port,
+        "listen": "127.0.0.1",
         "protocol": "trojan",
         "settings": { 
             "clients": [{ "password": "$pass" }] 
         },
         "streamSettings": { 
             "network": "ws", 
-            "wsSettings": { "path": "/$path" } 
+            "wsSettings": { "path": "/$path" }
         }
     }],
     "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
 
-    # 生成 Caddy 配置
-    echo "$domain {
+    cat <<EOF > /etc/caddy/Caddyfile
+$domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy /$path localhost:$port
-}" > /etc/caddy/Caddyfile
+    reverse_proxy /$path 127.0.0.1:$port
+}
+EOF
 
-    # 校验与重启
     check_caddy
     check_json "$config_path"
+    
     restart_service caddy
-    restart_service "$is_core"  # 确保 is_core 变量已定义，通常是 xray
+    restart_service "$is_core"
     
     echo -e "${Font_Cyan}请稍等，验证服务状态中...${Font_Suffix}"
-    sleep 2
-    check_service_alive $port "Trojan-WS"
-    check_external_tcp "$domain" 443       
+    sleep 3
     
-    # 调用展示函数：传入所有必要参数
-    show_trojan_info "ws" "$pass" "$domain" "$path"
+    check_service_alive $port "Trojan-WS"
+    check_external_tcp "$domain" 443
+    
+    # === 关键修复：必须严格使用 "Trojan-WS"（大写 WS）===
+    show_protocol_info "Trojan-WS" "$pass" "$domain" "$path"
 }
 
+# 协议 7 安装 Trojan-gRPC-TLS
 gen_trojan_grpc() {
     check_domain
-    # 显式获取域名，防止严格模式报错
     local domain=$(cat /tmp/domain 2>/dev/null || echo "")
     [[ -z "$domain" ]] && {
         echo -e "${Font_Red}[ERROR] domain 为空，请检查域名配置${Font_Suffix}"
@@ -932,17 +960,18 @@ gen_trojan_grpc() {
     install_caddy 
     common_tls_setup
     
-    local pass
-    read -p "请输入 Trojan 密码 (默认随机): " pass
-    [[ -z "$pass" ]] && pass=$(openssl rand -hex 6)
-    
-    local serviceName=$(openssl rand -hex 4)
+    # === 密码处理（统一变量名）===
+    local uuid
+    read -p "请输入 Trojan 密码 (默认随机6位hex): " uuid
+    [[ -z "$uuid" ]] && uuid=$(openssl rand -hex 6)
+
+    local serviceName=$(openssl rand -hex 8)   # 加长一点
     local port=10005
     check_port $port
 
     echo -e "${Font_Cyan}正在配置 Trojan-gRPC-TLS...${Font_Suffix}"
 
-    # 生成 Xray 配置
+    # === Xray 配置（Trojan + gRPC）===
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -951,7 +980,7 @@ gen_trojan_grpc() {
         "listen": "127.0.0.1", 
         "protocol": "trojan",
         "settings": { 
-            "clients": [{ "password": "$pass" }] 
+            "clients": [{ "password": "$uuid" }] 
         },
         "streamSettings": { 
             "network": "grpc", 
@@ -962,8 +991,9 @@ gen_trojan_grpc() {
 }
 EOF
 
-    # 生成 Caddy 配置 (注意：gRPC 需要 h2c 模式)
-    echo "$domain {
+    # === Caddy 配置（gRPC 必须带 h2c）===
+    cat <<EOF > /etc/caddy/Caddyfile
+$domain {
     tls {
         protocols tls1.2 tls1.3
     }
@@ -972,44 +1002,49 @@ EOF
             versions h2c
         }
     }
-}" > /etc/caddy/Caddyfile
+}
+EOF
 
     check_caddy
     check_json "$config_path"
     
-    # 启动服务
     restart_service caddy
     restart_service "$is_core"
     
     echo -e "${Font_Cyan}请稍等，验证服务状态中...${Font_Suffix}"
-    sleep 2
-    check_service_alive $port "Trojan-gRPC"
-    check_external_tcp "$domain" 443      
+    sleep 3
     
-    # 【核心修改】显式传参给信息展示函数
-    show_trojan_info "grpc" "$pass" "$domain" "$serviceName"
+    check_service_alive $port "Trojan-gRPC"
+    check_external_tcp "$domain" 443
+    
+    # === 关键：必须用 "Trojan-gRPC"（和 show_protocol_info case 严格匹配）===
+    show_protocol_info "Trojan-gRPC" "$uuid" "$domain" "$serviceName"
 }
 
+
+# 协议 8，安装 VMess-WS-TLS 【广泛兼容/传统方案】
 gen_vmess_ws() {
     check_domain
-    domain="$(cat /tmp/domain 2>/dev/null || echo "")"
+    local domain=$(cat /tmp/domain 2>/dev/null || echo "")
     [[ -z "$domain" ]] && {
-        echo "[ERROR] domain 为空"
+        echo -e "${Font_Red}[ERROR] domain 为空，请检查域名配置${Font_Suffix}"
         exit 1
     }
+    
     install_caddy
     common_tls_setup
-    local uuid=$(cat /proc/sys/kernel/random/uuid)
-    local path=$(openssl rand -hex 6)
-    local port=10001
-    check_port $port
     
-    UUID=$uuid
-    WPATH=$path
-    DOMAIN=$domain
+    # === UUID 与路径 ===
+    local uuid
+    read -p "请输入 VMess UUID (默认随机生成): " uuid
+    [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
+    
+    local path=$(openssl rand -hex 8)
+    local port=10006
 
     echo -e "${Font_Cyan}正在配置 VMess-WS-TLS...${Font_Suffix}"
 
+    # === Xray 配置 ===
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -1017,54 +1052,72 @@ gen_vmess_ws() {
         "port": $port,
         "listen": "127.0.0.1",
         "protocol": "vmess",
-        "settings": {
-            "clients": [{"id": "$UUID"}]
+        "settings": { 
+            "clients": [{ "id": "$uuid", "alterId": 0 }] 
         },
-        "streamSettings": {
-            "network": "ws",
-            "wsSettings": {"path": "/$WPATH"}
+        "streamSettings": { 
+            "network": "ws", 
+            "wsSettings": { "path": "/$path" }
         }
     }],
-    "outbounds": [{"protocol": "freedom"}]
+    "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
 
+    # === Caddy 配置 ===
     cat <<EOF > /etc/caddy/Caddyfile
-$DOMAIN {
+$domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy /$WPATH 127.0.0.1:$port
+    reverse_proxy /$path 127.0.0.1:$port
 }
 EOF
+
     check_caddy
     check_json "$config_path"
-    restart_service xray
+    
     restart_service caddy
+    restart_service "$is_core"
+    
+    echo -e "${Font_Cyan}请稍等，验证服务状态中...${Font_Suffix}"
+    sleep 3
+    
     check_service_alive $port "VMess-WS"
-    check_external_tcp "$domain" 443      
+    check_external_tcp "$domain" 443
+    
+    # === 关键修复：调用专用 VMess 显示函数（不是 show_protocol_info）===
+    # 临时导出变量供 show_vmess_ws_info 使用
+    export DOMAIN="$domain"
+    export UUID="$uuid"
+    export WPATH="$path"
+    
     show_vmess_ws_info
 }
 
+# 协议 9
 gen_vmess_grpc() {
     check_domain
-    domain="$(cat /tmp/domain 2>/dev/null || echo "")"
+    local domain=$(cat /tmp/domain 2>/dev/null || echo "")
     [[ -z "$domain" ]] && {
-        echo "[ERROR] domain 为空"
+        echo -e "${Font_Red}[ERROR] domain 为空，请检查域名配置${Font_Suffix}"
         exit 1
     }
+    
     install_caddy
     common_tls_setup
-    local uuid=$(cat /proc/sys/kernel/random/uuid)
-    local serviceName=$(openssl rand -hex 6)
-    local port=10002
-    check_port $port
-    UUID=$uuid
-    WPATH=$serviceName
-    DOMAIN=$domain
+    
+    # === UUID 与 ServiceName ===
+    local uuid
+    read -p "请输入 VMess UUID (默认随机生成): " uuid
+    [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
+    
+    local serviceName=$(openssl rand -hex 8)   # 加长一点，更安全
+    local port=10007                           # 使用独立高位端口
 
     echo -e "${Font_Cyan}正在配置 VMess-gRPC-TLS...${Font_Suffix}"
 
+    # === Xray 配置 ===
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -1072,20 +1125,21 @@ gen_vmess_grpc() {
         "port": $port,
         "listen": "127.0.0.1",
         "protocol": "vmess",
-        "settings": {
-            "clients": [{"id": "$UUID"}]
+        "settings": { 
+            "clients": [{ "id": "$uuid", "alterId": 0 }] 
         },
-        "streamSettings": {
-            "network": "grpc",
-            "grpcSettings": {"serviceName": "$WPATH"}
+        "streamSettings": { 
+            "network": "grpc", 
+            "grpcSettings": { "serviceName": "$serviceName" } 
         }
     }],
-    "outbounds": [{"protocol": "freedom"}]
+    "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
 
+    # === Caddy 配置（gRPC 必须 h2c）===
     cat <<EOF > /etc/caddy/Caddyfile
-$DOMAIN {
+$domain {
     tls {
         protocols tls1.2 tls1.3
     }
@@ -1096,185 +1150,87 @@ $DOMAIN {
     }
 }
 EOF
+
     check_caddy
     check_json "$config_path"
-    restart_service xray
+    
     restart_service caddy
+    restart_service "$is_core"
+    
+    echo -e "${Font_Cyan}请稍等，验证服务状态中...${Font_Suffix}"
+    sleep 3
+    
     check_service_alive $port "VMess-gRPC"
     check_external_tcp "$domain" 443
+    
+    # === 关键：调用专用 VMess-gRPC 显示函数 ===
+    export DOMAIN="$domain"
+    export UUID="$uuid"
+    export WPATH="$serviceName"
     show_vmess_grpc_info
 }
 
 # ------------------------------------------------ 信息展示模块（完全保留）------------------------------------------------
-show_vless_reality_info() {
-    local uuid=$1 pub_key=$2 short_id=$3 sni=$4
-    local ip=$(curl -4 -s ip.sb 2>/dev/null || echo "你的IP")
-    local ps_name="REALITY-Vision_${sni}_$(date +%Y%m%d)"
+# ==================== 【合并版】通用分享链接展示函数 ====================
+show_protocol_info() {
+    local protocol_type=$1   # vision / xhttp / ws / grpc / trojan 等
+    local uuid=$2
+    local extra1=$3
+    local extra2=$4
+    local extra3=$5
+    local extra4=$6
 
-    local link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=tcp#$ps_name"
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="${protocol_type}_${extra1}_$(date +%Y%m%d)"
 
-    echo -e "${Font_Green}VLESS-REALITY-Vision 安装成功！${Font_Suffix}"
+    local link=""
+
+case "$protocol_type" in
+        "REALITY-Vision")
+            # 协议1：VLESS-REALITY-Vision
+            link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=tcp#$ps_name"
+            ;;
+        "REALITY-xHTTP")
+            # 协议2：VLESS-REALITY-xhttp
+            link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=xhttp&path=%2F$extra4#$ps_name"
+            ;;
+        "VLESS-XHTTP")
+            # 协议5：VLESS-XHTTP-TLS (修复重点：精准指定传输类型为 xhttp 并带上 path)
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=xhttp&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=h2%2Chttp%2F1.1#$ps_name"
+            ;;
+        "VLESS-WS")
+            # 协议3：VLESS-WS-TLS
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=ws&host=$extra1&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=http/1.1#$ps_name"
+            ;;
+        "VLESS-gRPC")
+            # 协议4：VLESS-gRPC-TLS
+            link="vless://$uuid@$extra1:443?encryption=none&security=tls&type=grpc&host=$extra1&serviceName=$extra2&sni=$extra1&fp=chrome&alpn=h2#$ps_name"
+            ;;
+        "Trojan-WS")
+            # 协议6：Trojan-WS-TLS (修复重点：Trojan 协议前缀为 trojan:// 且无 encryption 参数)
+            link="trojan://$uuid@$extra1:443?security=tls&type=ws&host=$extra1&path=%2F$extra2&sni=$extra1&fp=chrome&alpn=http/1.1#$ps_name"
+            ;;
+        "Trojan-gRPC")
+            # 协议7：Trojan-gRPC-TLS (修复重点：Trojan 协议前缀为 trojan:// 且无 encryption 参数)
+            link="trojan://$uuid@$extra1:443?security=tls&type=grpc&host=$extra1&serviceName=$extra2&sni=$extra1&fp=chrome&alpn=h2#$ps_name"
+            ;;
+        *)
+            # 兜底通用逻辑
+            link="vless://$uuid@$ip:443?encryption=none&security=tls&type=$protocol_type#$ps_name"
+            ;;
+    esac
+
+    echo -e "${Font_Green}${protocol_type} 安装成功！${Font_Suffix}"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
     echo -e "${Font_Cyan}地址:${Font_Suffix} $ip"
-    echo -e "${Font_Cyan}SNI:${Font_Suffix} $sni"
-    echo -e "${Font_Cyan}公钥:${Font_Suffix} $pub_key"
-    echo -e "${Font_Cyan}ShortID:${Font_Suffix} $short_id"
-    echo -e "${Font_Red}分享链接:${Font_Suffix} $link"
-    show_qr_code "$link"
-}
-
-show_vless_reality_xhttp_info() {
-    local uuid=$1 pub_key=$2 short_id=$3 sni=$4 path=$5
-    local ip=$(curl -4 -s ip.sb 2>/dev/null || echo "你的IP")
-    local ps_name="REALITY-xHTTP_${sni}_$(date +%Y%m%d)"
-
-    # 强制确保 type=xhttp
-    local link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$sni&fp=chrome&pbk=$pub_key&sid=$short_id&type=xhttp&path=%2F$path#$ps_name"
-
-    echo -e "${Font_Green}VLESS-REALITY-xhttp 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}地址 (IPv4):${Font_Suffix} $ip"
-    echo -e "${Font_Cyan}SNI:${Font_Suffix} $sni"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}公钥 (pbk):${Font_Suffix} $pub_key"
-    echo -e "${Font_Cyan}ShortID:${Font_Suffix} $short_id"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}分享链接:${Font_Suffix}"
     echo "$link"
     show_qr_code "$link"
     echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
 }
 
-show_vless_ws_info() {
-    local uuid=$1 domain=$2 path=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=ws&host=$domain&path=%2F$path#$ps_name"
 
-    echo -e "${Font_Green}VLESS-WS-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}端口:${Font_Suffix} 443 (TLS)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_vless_grpc_info() {
-    local uuid=$1 domain=$2 serviceName=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=grpc&serviceName=$serviceName&sni=$domain#$ps_name"
-
-    echo -e "${Font_Green}VLESS-gRPC-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}ServiceName:${Font_Suffix} $serviceName"
-    echo -e "${Font_Cyan}端口:${Font_Suffix} 443 (TLS)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_vless_xhttp_info() {
-    local uuid=$1 domain=$2 path=$3
-    local ps_name="${domain}_$(date +%Y%m%d)"
-    local link="vless://$uuid@$domain:443?encryption=none&security=tls&type=xhttp&path=%2F$path&sni=$domain#$ps_name"
-
-    echo -e "${Font_Green}VLESS-XHTTP-TLS 安装成功！${Font_Suffix}"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Cyan}域名:${Font_Suffix} $domain"
-    echo -e "${Font_Cyan}UUID:${Font_Suffix} $uuid"
-    echo -e "${Font_Cyan}路径:${Font_Suffix} /$path"
-    echo -e "${Font_Cyan}模式:${Font_Suffix} auto (建议客户端手动选 auto)"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "$link"
-    show_qr_code "$link"
-    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
-}
-
-show_trojan_info() {
-    local type=$1
-    local pass=$2
-    local dom=$3
-    local path_or_service=$4
-    local link=""
-
-    if [[ "$type" == "ws" ]]; then
-        # 拼接 Trojan-WS 链接
-        link="trojan://${pass}@${dom}:443?security=tls&type=ws&sni=${dom}&path=%2f${path_or_service}#Trojan_WS_${dom}"
-    elif [[ "$type" == "grpc" ]]; then
-        # 拼接 Trojan-gRPC 链接
-        link="trojan://${pass}@${dom}:443?security=tls&encryption=none&type=grpc&serviceName=${path_or_service}&sni=${dom}#Trojan_gRPC_${dom}"
-    fi
-
-    echo -e "\n${Font_Green}---------- Trojan 配置信息 ----------${Font_Suffix}"
-    echo -e "${Font_Cyan}协议类型    :${Font_Suffix} Trojan-${type}"
-    echo -e "${Font_Cyan}地址 (Address):${Font_Suffix} ${dom}"
-    echo -e "${Font_Cyan}端口 (Port)   :${Font_Suffix} 443"
-    echo -e "${Font_Cyan}密码 (Password):${Font_Suffix} ${pass}"
-    echo -e "${Font_Cyan}传输协议 (Net):${Font_Suffix} ${type}"
-    echo -e "${Font_Cyan}路径/服务名   :${Font_Suffix} ${path_or_service}"
-    echo -e "${Font_Cyan}TLS/SNI       :${Font_Suffix} ${dom}"
-    echo -e "${Font_Green}-------------------------------------${Font_Suffix}"
-    echo -e "${Font_Red}分享链接:${Font_Suffix}"
-    echo -e "${Font_Yellow}${link}${Font_Suffix}"
-    echo -e "${Font_Green}-------------------------------------${Font_Suffix}\n"
-    show_qr_code "$link"
-}
-
-# VMess 展示函数（完全保留）
-display_config_board() {
-    local p_name=$1 p_link=$2
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    echo -e "  协议类型    :  ${Font_Cyan}${p_name}${Font_Suffix}"
-    echo -e "  地址 (Addr) :  ${Font_Cyan}${DOMAIN}${Font_Suffix}"
-    echo -e "  端口 (Port) :  ${Font_Cyan}443${Font_Suffix}"
-    echo -e "  用户ID(UUID):  ${Font_Cyan}${UUID}${Font_Suffix}"
-    if [[ -n "$WPATH" ]]; then
-        echo -e "  路径 (Path) :  ${Font_Cyan}/${WPATH}${Font_Suffix}"
-    fi
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    echo -e "  分享链接: ${Font_Red}${p_link}${Font_Suffix}"
-    echo -e "${Font_Green}————————————————————————————————————————————————————————————————${Font_Suffix}"
-    show_qr_code "$p_link"
-}
-
-show_vmess_ws_info() {
-    local domain_name="${DOMAIN:-域名未设置}"
-    local uuid_val="${UUID:-UUID未生成}"
-    local path_val="${WPATH:-path}"
-    local vmess_json=$(cat <<EOF
-{
-  "v": "2", "ps": "${domain_name}_WS", "add": "${domain_name}", "port": "443", "id": "${uuid_val}",
-  "aid": "0", "net": "ws", "path": "/${path_val}", "type": "none", "host": "${domain_name}", "tls": "tls"
-}
-EOF
-)
-    local v_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
-    display_config_board "VMess-WS-TLS" "$v_link"
-}
-
-show_vmess_grpc_info() {
-    local domain_name="${DOMAIN:-域名未设置}"
-    local uuid_val="${UUID:-UUID未生成}"
-    local path_val="${WPATH:-path}"
-    local vmess_json=$(cat <<EOF
-{
-  "v": "2", "ps": "${domain_name}_gRPC", "add": "${domain_name}", "port": "443", "id": "${uuid_val}",
-  "aid": "0", "net": "grpc", "path": "${path_val}", "type": "none", "host": "${domain_name}", "tls": "tls"
-}
-EOF
-)
-    local v_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
-    display_config_board "VMess-gRPC-TLS" "$v_link"
-}
+#合并所有show代码结束
 
 show_qr_code() {
     local link=$1
@@ -1284,6 +1240,79 @@ show_qr_code() {
     else
         echo -e "${Font_Red}提示: qrencode 未安装，无法生成二维码。${Font_Suffix}"
     fi
+}
+
+# === 完完整整地补回被删除的 VMess 展现函数，保持你原本的风格定义变量和输出 ===
+show_vmess_ws_info() {
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="VMess_WS_${DOMAIN}_$(date +%Y%m%d)"
+    
+    local vmess_json=$(cat <<EOF
+{
+  "v": "2",
+  "ps": "${ps_name}",
+  "add": "${DOMAIN}",
+  "port": "443",
+  "id": "${UUID}",
+  "aid": "0",
+  "scy": "auto",
+  "net": "ws",
+  "type": "none",
+  "host": "${DOMAIN}",
+  "path": "/${WPATH}",
+  "tls": "tls",
+  "sni": "${DOMAIN}",
+  "alpn": "http/1.1"
+}
+EOF
+)
+    local b64_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
+
+    echo -e "${Font_Green}VMess-WS-TLS 安装成功！${Font_Suffix}"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+    echo -e "${Font_Cyan}域名:${Font_Suffix} $DOMAIN"
+    echo -e "${Font_Cyan}UUID:${Font_Suffix} $UUID"
+    echo -e "${Font_Cyan}路径:${Font_Suffix} /$WPATH"
+    echo -e "${Font_Red}分享链接:${Font_Suffix}"
+    echo "$b64_link"
+    show_qr_code "$b64_link"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+}
+
+show_vmess_grpc_info() {
+    local ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || echo "你的IP")
+    local ps_name="VMess_gRPC_${DOMAIN}_$(date +%Y%m%d)"
+    
+    local vmess_json=$(cat <<EOF
+{
+  "v": "2",
+  "ps": "${ps_name}",
+  "add": "${DOMAIN}",
+  "port": "443",
+  "id": "${UUID}",
+  "aid": "0",
+  "scy": "auto",
+  "net": "grpc",
+  "type": "none",
+  "host": "${DOMAIN}",
+  "path": "${WPATH}",
+  "tls": "tls",
+  "sni": "${DOMAIN}",
+  "alpn": "h2"
+}
+EOF
+)
+    local b64_link="vmess://$(echo -n "$vmess_json" | base64 | tr -d '\n')"
+
+    echo -e "${Font_Green}VMess-gRPC-TLS 安装成功！${Font_Suffix}"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
+    echo -e "${Font_Cyan}域名:${Font_Suffix} $DOMAIN"
+    echo -e "${Font_Cyan}UUID:${Font_Suffix} $UUID"
+    echo -e "${Font_Cyan}服务名:${Font_Suffix} $WPATH"
+    echo -e "${Font_Red}分享链接:${Font_Suffix}"
+    echo "$b64_link"
+    show_qr_code "$b64_link"
+    echo -e "${Font_Magenta}===========================================================${Font_Suffix}"
 }
 
 show_usage() {
@@ -1434,9 +1463,9 @@ main_menu() {
     
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
-    echo -e "${Font_Red}   作者：人生若只如初见，更新：2024/05/10   ${Font_Suffix}"
+    echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/18   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.18.02.33（release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.18.13.22（Release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
