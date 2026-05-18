@@ -23,6 +23,7 @@
 #   2026/05/10：增加BBR安装菜单，增加防火墙智能策略，修复可能出现的错误提示，优化代码。
 #   2026/05/15：合并gen_vless_reality,gen_vless_reality_xhttp函数为gen_vless_reality_unified函数，优化代码。
 #   2026/05/17：修复check_current_protocol函数。
+#   2026/05/18：优化菜单选项。
 # ====================================================
 # 终端颜色定义
 Font_Black="\033[30m"   # 黑色
@@ -1381,10 +1382,10 @@ uninstall_all() {
 # --- 主菜单（保留原样，仅加强调用）---
 main_menu() {
     clear
-    echo -e "${Font_Magenta}======================= 系统状态检查 ======================${Font_Suffix}"
+echo -e "${Font_Magenta}======================= 系统状态检查 ======================${Font_Suffix}"
     # 1、vnstat 流量统计状态
     if command -v vnstat &> /dev/null && systemctl is-active --quiet vnstat; then
-        echo -e "   流量统计 : ${Font_Green}监控中 ✅${Font_Suffix}"
+        echo -e "   流量统计 : ${Font_Green}监控中... ✅${Font_Suffix}"
     elif command -v vnstat &> /dev/null; then
         echo -e "   流量统计 : ${Font_Yellow}已安装但未启动${Font_Suffix}"
     else
@@ -1394,7 +1395,7 @@ main_menu() {
     # 2、BBR 状态
     local bbr_status
     if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
-        bbr_status="${Font_Green}运行中 ✅${Font_Suffix}"
+        bbr_status="${Font_Green}运行中... ✅${Font_Suffix}"
     else
         bbr_status="${Font_Red}未开启 ❌ ${Font_Suffix}"
     fi
@@ -1415,16 +1416,23 @@ main_menu() {
     fi
 
     if [[ "$xray_installed" == true && "$xray_active" == true ]]; then
-        echo -e "   Xray 服务: ${Font_Green}运行中 ✅${Font_Suffix}"
+        echo -e "   Xray 服务: ${Font_Green}运行中... ✅${Font_Suffix}"
     elif [[ "$xray_installed" == true ]]; then
         echo -e "   Xray 服务: ${Font_Yellow}已安装但未运行${Font_Suffix}"
     else
         echo -e "   Xray 服务: ${Font_Red}未安装 ❌ ${Font_Suffix}"
     fi 
-    # 4、当前安装的协议
+
+    # 4、当前安装的协议及展示信息判定（按免域名逻辑划分）
+    local current_proto="未配置 ❌"
+    local show_domain="无"
+    local is_reality=false
+    local is_tls=false
+
     if [[ -f $config_path ]]; then
-        local current_proto="未知"
+        current_proto="未知"
         if grep -q "realitySettings" $config_path; then
+            is_reality=true
             if grep -q '"network": "xhttp"' $config_path; then
                 current_proto="VLESS-REALITY-xhttp"
             elif grep -q "xtls-rprx-vision" $config_path; then
@@ -1432,19 +1440,24 @@ main_menu() {
             else
                 current_proto="VLESS-REALITY"
             fi
+            # 提取 Reality 伪装域名
+            show_domain=$(grep -m1 '"dest":' $config_path | grep -oP '(?<="dest": ")[^"]+' | cut -d':' -f1 || echo "未知")
         elif grep -q '"protocol": "trojan"' $config_path; then
+            is_tls=true
             if grep -q '"network": "ws"' $config_path; then 
                 current_proto="Trojan-WS-TLS"
             elif grep -q '"network": "grpc"' $config_path; then 
                 current_proto="Trojan-gRPC-TLS"
             fi
         elif grep -q '"protocol": "vmess"' $config_path; then
+            is_tls=true
             if grep -q '"network": "ws"' $config_path; then 
                 current_proto="VMess-WS-TLS"
             elif grep -q '"network": "grpc"' $config_path; then 
                 current_proto="VMess-gRPC-TLS"
             fi
         elif grep -q '"protocol": "vless"' $config_path; then
+            is_tls=true
             local net=$(grep -m1 '"network":' $config_path | grep -oP '(?<="network": ")[^"]+' || echo "")
             case "${net,,}" in
                 ws)    current_proto="VLESS-WS-TLS" ;;
@@ -1453,19 +1466,53 @@ main_menu() {
                 *)     current_proto="VLESS-${net^^}" ;;
             esac
         fi
-        echo -e "   当前协议 : ${Font_Green}${current_proto}${Font_Suffix}"
-    else
-        echo -e "   当前协议 : ${Font_Red}未配置 ❌ ${Font_Suffix}"
+
+        # 如果是 3-9 协议 (TLS类)，从 Caddyfile 或 config 提取对外节点域名
+        if [[ "$is_tls" == true ]]; then
+            if [[ -f "/etc/caddy/Caddyfile" ]]; then
+                show_domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile | head -n1 | tr -d ' ')
+            fi
+            [[ -z "$show_domain" ]] && show_domain=$(grep -oP '(?<="serverNames": \[")[^"]+' $config_path | head -n1)
+        fi
     fi
+
+    # 打印当前协议与域名、状态分支
+    if [[ -f $config_path ]]; then
+        if [[ "$is_tls" == true ]]; then
+            # 协议3-9：先显示Caddy服务状态
+            if command -v caddy &>/dev/null && systemctl is-active --quiet caddy; then
+                echo -e "   Caddy服务: ${Font_Green}运行中... ✅${Font_Suffix}"
+            elif command -v caddy &>/dev/null; then
+                echo -e "   Caddy服务: ${Font_Yellow}已安装但未运行 ⚠️${Font_Suffix}"
+            else
+                echo -e "   Caddy服务: ${Font_Red}未安装 ❌${Font_Suffix}"
+            fi
+        fi
+
+        # 再显示当前协议
+        echo -e "   当前协议 : ${Font_Green}${current_proto}${Font_Suffix}"
+        
+        # 最后显示当前域名或伪装域名
+        if [[ "$is_reality" == true ]]; then
+            # 协议1和2：只显示伪装域名，不显示当前域名行
+            echo -e "   伪装域名 : ${Font_Green}${show_domain}${Font_Suffix}"
+        elif [[ "$is_tls" == true ]]; then
+            # 协议3-9：正常显示域名
+            echo -e "   当前域名 : ${Font_Green}${show_domain}${Font_Suffix}"
+        fi
+    else
+        echo -e "   当前协议 : ${Font_Red}${current_proto}${Font_Suffix}"
+    fi
+
     # 5、当前IP地址
     local local_ip=$(curl -4 -s --connect-timeout 2 ip.sb || curl -s --connect-timeout 2 http://ipv4.icanhazip.com || echo "获取失败")
-    echo -e "   本机 IP  : ${Font_Green}${local_ip}${Font_Suffix}"  
+    echo -e "   本机 IP  : ${Font_Green}${local_ip}${Font_Suffix}"
     
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
     echo -e "${Font_Red}   作者：人生若只如初见，更新：2026/05/18   ${Font_Suffix}"
     echo -e "${Font_Red}   名称：xray 一键安装脚本    ${Font_Suffix}"
-    echo -e "${Font_Red}   版本号：v1.0.05.18.13.22（Release）    ${Font_Suffix}"
+    echo -e "${Font_Red}   版本号：v1.0.05.18.13.30（Release）    ${Font_Suffix}"
     echo -e "${Font_Red}   适用环境：Debian12/13、Ubuntu25/26    ${Font_Suffix}"
     echo -e "${Font_Red}   当前系统：${Font_Suffix}${Font_Green}$OS_NAME    ${Font_Suffix}"
     echo -e "-----------------------------------------------------------"
@@ -1489,8 +1536,8 @@ main_menu() {
     read -p "请选择: " num
 
     case "$num" in
-        1) gen_vless_reality_unified "vision" ;;
-        2) gen_vless_reality_unified "xhttp" ;;
+        1) gen_vless_reality_unified "vision"; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
+        2) gen_vless_reality_unified "xhttp"; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         3) preparation_stack; gen_vless_ws; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         4) preparation_stack; gen_vless_grpc; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
         5) preparation_stack; gen_vless_xhttp; echo -e "${Font_Red}安装完成，请复制上方链接后按回车键返回菜单...${Font_Suffix}"; read; main_menu ;;
