@@ -59,7 +59,7 @@ trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 $LINENO 行执行失败！\n出
 is_core="xray"
 conf_dir="/usr/local/etc/xray"
 config_path="${conf_dir}/config.json"
-PRESET_DOMAIN="vcc.myvpsworld.top" #如果为空，安装过程中手动输入
+PRESET_DOMAIN="vc.myvpsworld.top" #如果为空，安装过程中手动输入
 XRAY_VERSION="26.5.3"   #最新版 latest
 CADDY_VERSION="2.11.2"
 FIX_VER=1 #1，锁定。0，最新版#
@@ -1428,8 +1428,10 @@ echo -e "${Font_Magenta}======================= 系统状态检查 =============
     local show_domain="无"
     local is_reality=false
     local is_tls=false
-
+    local current_port="未知"
+    
     if [[ -f $config_path ]]; then
+        current_port=$(grep -m1 '"port":' $config_path | grep -oP '\d+' || echo "未知")
         current_proto="未知"
         if grep -q "realitySettings" $config_path; then
             is_reality=true
@@ -1504,9 +1506,11 @@ echo -e "${Font_Magenta}======================= 系统状态检查 =============
         echo -e "   当前协议 : ${Font_Red}${current_proto}${Font_Suffix}"
     fi
 
-    # 5、当前IP地址
+    # 5、当前IP地址和端口
     local local_ip=$(curl -4 -s --connect-timeout 2 ip.sb || curl -s --connect-timeout 2 http://ipv4.icanhazip.com || echo "获取失败")
     echo -e "   本机 IP  : ${Font_Green}${local_ip}${Font_Suffix}"
+    # <--- 新增：打印端口信息，样式与 IP 保持一致
+    echo -e "   服务端口 : ${Font_Green}${current_port}${Font_Suffix}" 
     
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${Font_Red}===========================================================${Font_Suffix}"
