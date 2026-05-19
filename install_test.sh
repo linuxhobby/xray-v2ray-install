@@ -76,23 +76,68 @@ check_root() {
     fi
 }
 
-# 自定义函数：错误信息检查
+# 自定义函数：错误信息检查（519修改）
 check_command() {
-    if ! "$@"; then
-        echo -e "${RED}[ERROR] 命令执行失败: $*${NC}"
-        echo -e "${RED}请查看上方错误信息，脚本已停止执行。${NC}"
-        journalctl -u xray --no-pager -n 50 2>/dev/null || true
-        journalctl -u caddy --no-pager -n 50 2>/dev/null || true
-        exit 1
+    local cmd=("$@")
+    if ! "${cmd[@]}"; then
+        echo -e "${RED}[ERROR] 命令执行失败: ${cmd[*]}${NC}" >&2
+        echo -e "${RED}输出日志：${NC}" >&2
+        journalctl -u xray -x --no-pager -n 100 2>/dev/null | tail -100 || true
+        journalctl -u caddy -x --no-pager -n 100 2>/dev/null | tail -100 || true
+        return 1
     fi
-    return 0
 }
 
-# 自定义函数：建立xray用户和权限
+# 自定义函数：错误信息检查（519新增）
+get_local_ip() {
+    local ip
+    local timeout=5
+    local services=(
+        "https://4.ipw.cn"
+        "https://api.ipify.org"
+        "https://ifconfig.me"
+        "https://icanhazip.com"
+    )
+    
+    for service in "${services[@]}"; do
+        ip=$(curl -4 -s --connect-timeout $timeout --max-time $((timeout+2)) "$service" 2>/dev/null | tr -d '[:space:]')
+        
+        # 验证是否是合法的IPv4
+        if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    
+    # 都失败，尝试从本地网络获取
+    local_ip=$(hostname -I | awk '{print $1}')
+    if [[ -n "$local_ip" ]]; then
+        echo "$local_ip"
+        return 0
+    fi
+    
+    echo "获取失败"
+    return 1
+}
+
+# 自定义函数：建立xray用户和权限（519修改）
 setup_xray_user() {
-    useradd -r -s /bin/false -U xray 2>/dev/null || true
-    mkdir -p "$conf_dir"
-    chown -R xray:xray "$conf_dir" 2>/dev/null || true
+    if ! id xray &>/dev/null; then
+        useradd -r -s /bin/false -U xray || {
+            echo -e "${RED}[ERROR] 创建xray用户失败${NC}" >&2
+            return 1
+        }
+    fi
+    
+    mkdir -p "$conf_dir" || {
+        echo -e "${RED}[ERROR] 创建目录 $conf_dir 失败${NC}" >&2
+        return 1
+    }
+    
+    if ! chown -R xray:xray "$conf_dir"; then
+        echo -e "${RED}[ERROR] 设置目录权限失败${NC}" >&2
+        return 1
+    fi
 }
 
 # 自定义函数：TLS 类协议公共准备（减少少量重复）
@@ -126,14 +171,25 @@ check_json() {
     fi
 }
 
-#自定义函数：端口检测函数
+#自定义函数：端口检测函数（519修改）
 check_port() {
     local port=$1
-
-    if ss -tulnp 2>/dev/null | grep -q ":$port "; then
-        echo -e "${RED}[ERROR] 端口 $port 已被占用${NC}"
-        ss -tulnp | grep ":$port "
-        exit 1
+    
+    # 先用netstat，再用ss，再用lsof
+    if command -v ss &>/dev/null; then
+        if ss -tlnp 2>/dev/null | grep -E ":\s*$port\s" >/dev/null; then
+            echo -e "${RED}[ERROR] 端口 $port 已被占用：${NC}" >&2
+            ss -tlnp | grep -E ":\s*$port\s"
+            return 1
+        fi
+    elif command -v netstat &>/dev/null; then
+        if netstat -tlnp 2>/dev/null | grep -E ":\s*$port\s" >/dev/null; then
+            echo -e "${RED}[ERROR] 端口 $port 已被占用：${NC}" >&2
+            netstat -tlnp | grep -E ":\s*$port\s"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}[WARN] 无法检查端口 $port (ss/netstat不可用)${NC}"
     fi
 }
 
@@ -151,28 +207,39 @@ check_caddy() {
         exit 1
     fi
 }
-#自定义函数：服务端口存活检查函数
+#自定义函数：服务端口存活检查函数（519修改）
 check_service_alive() {
     local port=$1
     local name=$2
-
+    
     if [[ "$name" == *REALITY* ]]; then
         echo -e "${YELLOW}Reality 协议 → 跳过本地端口检查${NC}"
         return 0
     fi
-
-    # 普通协议正常检查
+    
     if ! systemctl is-active --quiet xray; then
-        echo -e "${RED}[ERROR] xray 未运行${NC}"
-        exit 1
+        echo -e "${RED}[ERROR] xray 未运行${NC}" >&2
+        return 1
     fi
-
-    if ! timeout 3 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/$port" 2>/dev/null; then
-        echo -e "${RED}[ERROR] $name TCP 不可达: $port${NC}"
-        exit 1
+    
+    # 尝试TCP连接（支持多种方式）
+    local connected=false
+    
+    if command -v nc &>/dev/null; then
+        timeout 5 nc -z 127.0.0.1 "$port" &>/dev/null && connected=true
+    elif bash --version >/dev/null 2>&1; then
+        timeout 5 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/$port" &>/dev/null && connected=true
+    elif command -v telnet &>/dev/null; then
+        timeout 5 telnet 127.0.0.1 "$port" </dev/null &>/dev/null && connected=true
     fi
-
-    echo -e "${GREEN}[OK] $name 服务正常 ($port)${NC}"
+    
+    if [[ "$connected" == true ]]; then
+        echo -e "${GREEN}[OK] $name 服务正常 ($port)${NC}"
+        return 0
+    else
+        echo -e "${RED}[ERROR] $name TCP 不可达: $port${NC}" >&2
+        return 1
+    fi
 }
 
 #自定义函数：TCP检查
@@ -193,15 +260,45 @@ check_external_tcp() {
     fi
 }
 
-#  自定义函数：依赖检查函数
+#  自定义函数：依赖检查函数（519修改）
 check_dependencies() {
     echo -e "${CYAN}>>> 检查系统依赖...${NC}"
-    local deps=(curl openssl wget qrencode host base64 socat tar unzip vnstat gnupg2 dnsutils)
-    for dep in "${deps[@]}"; do
+    
+    # 基础依赖
+    local base_deps=(curl openssl wget tar unzip)
+    
+    # 可选依赖
+    local optional_deps=(qrencode vnstat gnupg2)
+    
+    # 先更新apt缓存
+    apt-get update -qq || {
+        echo -e "${RED}[ERROR] apt-get update 失败${NC}" >&2
+        return 1
+    }
+    
+    local failed=0
+    for dep in "${base_deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
-            apt-get install -y "$dep" -qq
+            if ! apt-get install -y "$dep" -qq; then
+                echo -e "${RED}[ERROR] 安装 $dep 失败${NC}" >&2
+                failed=$((failed + 1))
+            fi
         fi
     done
+    
+    # 可选依赖安装失败只警告
+    for dep in "${optional_deps[@]}"; do
+        if ! command -v "$dep" &> /dev/null; then
+            if ! apt-get install -y "$dep" -qq 2>/dev/null; then
+                echo -e "${YELLOW}[WARN] 安装可选依赖 $dep 失败${NC}"
+            fi
+        fi
+    done
+    
+    if [ $failed -gt 0 ]; then
+        echo -e "${RED}[ERROR] 有 $failed 个基础依赖安装失败${NC}" >&2
+        return 1
+    fi
 }
 
 # 自定义函数：强制开启防火墙函数
@@ -538,7 +635,7 @@ check_domain() {
         if [[ -z "$domain" ]]; then continue; fi
 
         local local_ipv4
-        local_ipv4=$(curl -4 -s --connect-timeout 5 ip.sb || echo "")
+        local_ipv4=$(get_local_ip)
         
         local local_ipv6
         local_ipv6=$(curl -6 -s --connect-timeout 5 ip.sb || echo "")
@@ -1474,11 +1571,27 @@ uninstall_all() {
     systemctl stop xray caddy 2>/dev/null || true
     systemctl disable xray caddy 2>/dev/null || true
 
-    # 调用官方彻底卸载脚本（推荐 --purge）
-    if command -v xray &> /dev/null; then
-        echo -e "${CYAN}>>> 调用官方 Xray 彻底卸载脚本 (--purge)...${NC}"
-        bash <(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh) remove --purge
-    fi
+    # 调用官方彻底卸载脚本（推荐 --purge）（519修改）
+if ! command -v curl &>/dev/null; then
+    log_error "curl not found"
+    return 1
+fi
+
+# 添加验证机制
+local script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+local script_content
+script_content=$(curl -s --max-time 10 --retry 3 "$script_url") || {
+    log_error "Failed to download Xray installer"
+    return 1
+}
+
+# 简单的安全检查（确保不是HTML错误页）
+if echo "$script_content" | grep -q "<!DOCTYPE\|<html"; then
+    log_error "Downloaded file appears to be HTML, not a script"
+    return 1
+fi
+
+bash <(echo "$script_content") remove --purge
 
     # 清理 Caddy
     echo -e "${CYAN}>>> 清理 Caddy...${NC}"
@@ -1505,14 +1618,14 @@ uninstall_all() {
     read -r -p "按回车键返回主菜单"
 }
 
-# --- 主菜单（保留原样，仅加强调用）---
-main_menu() {
-    clear
+# ------------------------------------------------ 菜单部分代码 ------------------------------------------------
+# 1. 显示系统状态
+show_status() {
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${RED}====================== 脚本环境信息 =======================${NC}"
-    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/05/19   ${NC}"
+    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/05/20   ${NC}"
     echo -e "${RED}   名称：${NC}${BLUE}xray 一键安装脚本    ${NC}"
-    echo -e "${RED}   版本号：${NC}${BLUE}v1.0.05.19.22.02（Release）    ${NC}"
+    echo -e "${RED}   版本号：${NC}${BLUE}v1.0.05.20.00.42（Release）    ${NC}"
     echo -e "${RED}   适用环境：${NC}${BLUE}Debian12/13、Ubuntu25/26    ${NC}"
     echo -e "${RED}   当前系统：${NC}${GREEN}$OS_NAME    ${NC}"
 
@@ -1538,17 +1651,14 @@ main_menu() {
     # 3、xray状态
     local xray_installed=false
     local xray_active=false
-
     if [ -f "/etc/systemd/system/xray.service" ] || systemctl list-unit-files | grep -q "xray.service"; then
         xray_installed=true
     fi
-
     if command -v xray &> /dev/null && [ -f "${config_path}" ]; then
         if systemctl is-active --quiet xray; then
             xray_active=true
         fi
     fi
-
     if [[ "$xray_installed" == true && "$xray_active" == true ]]; then
         echo -e "   Xray 服务: ${GREEN}运行中... ✅${NC}"
     elif [[ "$xray_installed" == true ]]; then
@@ -1557,51 +1667,32 @@ main_menu() {
         echo -e "   Xray 服务: ${RED}未安装 ❌ ${NC}"
     fi 
 
-# 4、当前安装的协议及展示信息判定（按免域名逻辑划分）
+    # 4、当前安装的协议及展示信息判定
     local current_proto="未配置 ❌"
     local show_domain="无"
     local is_reality=false
     local is_tls=false
     local current_port="未知"
-   
     if [[ -f $config_path ]]; then
         current_proto="未知"
-        
-        # ==================== 智能端口判断（核心修改）====================
         if grep -q "realitySettings" $config_path; then
-            # Reality 协议（1和2）对外端口永远是443
             current_port=443
             is_reality=true
-            if grep -q '"network": "xhttp"' $config_path; then
-                current_proto="VLESS-REALITY-xhttp"
-            elif grep -q "xtls-rprx-vision" $config_path; then
-                current_proto="VLESS-REALITY-Vision"
-            else
-                current_proto="VLESS-REALITY"
-            fi
-            # 提取 Reality 伪装域名
+            if grep -q '"network": "xhttp"' $config_path; then current_proto="VLESS-REALITY-xhttp"
+            elif grep -q "xtls-rprx-vision" $config_path; then current_proto="VLESS-REALITY-Vision"
+            else current_proto="VLESS-REALITY"; fi
             show_domain=$(grep -m1 '"dest":' $config_path | grep -oP '(?<="dest": ")[^"]+' | cut -d':' -f1 || echo "未知")
-
         else
-            # 所有 TLS 协议（3~9）对外端口都是443（Caddy监听）
             current_port=443
             is_tls=true
-            
             if grep -q '"protocol": "trojan"' $config_path; then
-                if grep -q '"network": "ws"' $config_path; then 
-                    current_proto="Trojan-WS-TLS"
-                elif grep -q '"network": "grpc"' $config_path; then 
-                    current_proto="Trojan-gRPC-TLS"
-                fi
+                if grep -q '"network": "ws"' $config_path; then current_proto="Trojan-WS-TLS"
+                elif grep -q '"network": "grpc"' $config_path; then current_proto="Trojan-gRPC-TLS"; fi
             elif grep -q '"protocol": "vmess"' $config_path; then
-                if grep -q '"network": "ws"' $config_path; then 
-                    current_proto="VMess-WS-TLS"
-                elif grep -q '"network": "grpc"' $config_path; then 
-                    current_proto="VMess-gRPC-TLS"
-                fi
+                if grep -q '"network": "ws"' $config_path; then current_proto="VMess-WS-TLS"
+                elif grep -q '"network": "grpc"' $config_path; then current_proto="VMess-gRPC-TLS"; fi
             elif grep -q '"protocol": "vless"' $config_path; then
-                local net
-                net=$(grep -m1 '"network":' $config_path | grep -oP '(?<="network": ")[^"]+' || echo "")
+                local net=$(grep -m1 '"network":' $config_path | grep -oP '(?<="network": ")[^"]+' || echo "")
                 case "${net,,}" in
                     ws)    current_proto="VLESS-WS-TLS" ;;
                     grpc)  current_proto="VLESS-gRPC-TLS" ;;
@@ -1610,57 +1701,23 @@ main_menu() {
                 esac
             fi
         fi
-
-        # 提取显示域名（TLS协议使用Caddy域名）
-        if [[ "$is_tls" == true ]] && [[ -f "/etc/caddy/Caddyfile" ]]; then
-            show_domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile | head -n1 | tr -d ' ' || echo "未知")
-        fi
         [[ -z "$show_domain" ]] && show_domain=$(grep -oP '(?<="serverNames": \[")[^"]+' $config_path | head -n1 || echo "未知")
     fi
-
-        # 如果是 3-9 协议 (TLS类)，从 Caddyfile 或 config 提取对外节点域名
-        if [[ "$is_tls" == true ]]; then
-            if [[ -f "/etc/caddy/Caddyfile" ]]; then
-                show_domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile | head -n1 | tr -d ' ')
-            fi
-            [[ -z "$show_domain" ]] && show_domain=$(grep -oP '(?<="serverNames": \[")[^"]+' $config_path | head -n1)
-        fi
-
-    # 打印当前协议与域名、状态分支
-    if [[ -f $config_path ]]; then
-        if [[ "$is_tls" == true ]]; then
-            # 协议3-9：先显示Caddy服务状态
-            if command -v caddy &>/dev/null && systemctl is-active --quiet caddy; then
-                echo -e "   Caddy服务: ${GREEN}运行中... ✅${NC}"
-            elif command -v caddy &>/dev/null; then
-                echo -e "   Caddy服务: ${YELLOW}已安装但未运行 ⚠️${NC}"
-            else
-                echo -e "   Caddy服务: ${RED}未安装 ❌${NC}"
-            fi
-        fi
-
-        # 再显示当前协议
-        echo -e "   当前协议 : ${GREEN}${current_proto}${NC}"
-        
-        # 最后显示当前域名或伪装域名
-        if [[ "$is_reality" == true ]]; then
-            # 协议1和2：只显示伪装域名，不显示当前域名行
-            echo -e "   伪装域名 : ${GREEN}${show_domain}${NC}"
-        elif [[ "$is_tls" == true ]]; then
-            # 协议3-9：正常显示域名
-            echo -e "   当前域名 : ${GREEN}${show_domain}${NC}"
-        fi
-    else
-        echo -e "   当前协议 : ${RED}${current_proto}${NC}"
+    if [[ "$is_tls" == true ]]; then
+        [[ -f "/etc/caddy/Caddyfile" ]] && show_domain=$(grep -oP '^[^#\s{]+' /etc/caddy/Caddyfile | head -n1 | tr -d ' ')
+        if command -v caddy &>/dev/null && systemctl is-active --quiet caddy; then echo -e "   Caddy服务: ${GREEN}运行中... ✅${NC}"
+        elif command -v caddy &>/dev/null; then echo -e "   Caddy服务: ${YELLOW}已安装但未运行 ⚠️${NC}"
+        else echo -e "   Caddy服务: ${RED}未安装 ❌${NC}"; fi
     fi
-
-    # 5、当前IP地址和端口
-    local local_ip
-    local_ip=$(curl -4 -s --connect-timeout 2 ip.sb || curl -s --connect-timeout 2 http://ipv4.icanhazip.com || echo "获取失败")
-    echo -e "   本机 IP  : ${GREEN}${local_ip}${NC}"
-    # <--- 新增：打印端口信息，样式与 IP 保持一致
+    echo -e "   当前协议 : ${GREEN}${current_proto}${NC}"
+    [[ "$is_reality" == true ]] && echo -e "   伪装域名 : ${GREEN}${show_domain}${NC}"
+    [[ "$is_tls" == true ]] && echo -e "   当前域名 : ${GREEN}${show_domain}${NC}"
+    echo -e "   本机 IP  : ${GREEN}$(get_local_ip)${NC}"
     echo -e "   服务端口 : ${GREEN}${current_port}${NC}" 
+}
 
+# 2. 显示菜单选项
+show_menu() {
     echo -e "-----------------------------------------------------------"
     echo -e "${BLUE}  【1】 . 安装 VLESS-REALITY-Vision${NC}   ${RED}【推荐，最强隐蔽/不依赖域名】${NC}"
     echo -e "${BLUE}  【2】 . 安装 VLESS-REALITY-xhttp${NC}    ${CYAN}【最新黑科技/综合最强】${NC}"   
@@ -1671,7 +1728,6 @@ main_menu() {
     echo -e "${BLUE}  【7】 . 安装 Trojan-gRPC-TLS${NC}        ${CYAN}【高效转发/适合游戏】${NC}"
     echo -e "${BLUE}  【8】 . 安装 VMess-WS-TLS${NC}           ${YELLOW}【广泛兼容/传统方案】${NC}"
     echo -e "${BLUE}  【9】 . 安装 VMess-gRPC-TLS${NC}         ${YELLOW}【兼容gRPC新特性】${NC}"
-  
     echo -e "-----------------------------------------------------------"
     echo -e "${MAGENTA}  【c】 . 查看当前协议信息与链接${NC}" 
     echo -e "${MAGENTA}  【v】 . 查看流量统计 (vnstat)${NC}"
@@ -1679,40 +1735,43 @@ main_menu() {
     echo -e "${GREEN}  【d】 . 卸载与清理${NC}"
     echo -e "${YELLOW}  【q】 . 退出脚本${NC}" 
     echo -e "-----------------------------------------------------------"
-    while true; do
+}
+
+# 3. 处理用户选择
+handle_menu() {
     read -r -p "请选择: " num
-    
     if [[ -z "$num" ]]; then
         echo -e "${RED}输入不能为空，请重新输入！${NC}"
-        continue
+        return
     fi
-
     if [[ -n "${PROTOCOL_CONFIG[$num]}" ]]; then
         IFS='|' read -r _ _ _ _ _ _ cmd <<< "${PROTOCOL_CONFIG[$num]}"
-        
-        if [[ "$num" == [1-9] ]]; then
-            preparation_stack
-        fi
-        
+        [[ "$num" == [1-9] ]] && preparation_stack
         $cmd
         echo -e "${GREEN}安装完成，请按回车键返回主菜单...${NC}"
         read -r
         main_menu
         return
     fi
-
     case "$num" in
-        c|C) check_current_protocol; main_menu; return ;;
-        v|V) show_usage; main_menu; return ;;
-        b|B) menu_bbr; main_menu; return ;;
-        d|D) uninstall_all; main_menu; return ;;
+        c|C) check_current_protocol; main_menu ;;
+        v|V) show_usage; main_menu ;;
+        b|B) menu_bbr; main_menu ;;
+        d|D) uninstall_all; main_menu ;;
         q|Q) exit 0 ;;
-        *) 
-            echo -e "${RED}输入错误，请重新选择！${NC}"
-            ;;
+        *) echo -e "${RED}输入错误，请重新选择！${NC}"; sleep 1; main_menu ;;
     esac
-done
+}
+
+# 主菜单入口
+main_menu() {
+    clear
+    show_status
+    show_menu
+    handle_menu
 }
 # 脚本入口
-check_root
-main_menu
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    check_root
+    main_menu
+fi
