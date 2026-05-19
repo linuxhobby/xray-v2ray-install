@@ -700,9 +700,6 @@ gen_vless_reality_unified() {
 
         local extra_settings
         extra_settings='"xhttpSettings": {"path": "/'$path'", "mode": "auto"},'
-
-        # show_func 目前未被使用，建议删除或注释掉（避免 SC2034 警告）
-        # local show_func="show_vless_reality_xhttp_info"
     fi
 
     local config_path="/usr/local/etc/xray/config.json"
