@@ -1,30 +1,5 @@
 #!/bin/bash
 
-# ====================================================
-# 作者: 人生若只如初见
-# Release、Standard、Snapshot、Staging
-# 支持以下协议矩阵一键自动安装
-#  【1】 . 安装 VLESS-REALITY-Vision
-#  【2】 . 安装 VLESS-REALITY-xhttp
-#  【3】 . 安装 VLESS-WS-TLS
-#  【4】 . 安装 VLESS-gRPC-TLS
-#  【5】 . 安装 VLESS-XHTTP-TLS
-#  【6】 . 安装 Trojan-WS-TLS
-#  【7】 . 安装 Trojan-gRPC-TLS
-#  【8】 . 安装 VMess-WS-TLS
-#  【9】 . 安装 VMess-gRPC-TLS
-#   修改功能：
-#   2026/05/01：1、域名检测。2、信息查询功能。3、优化菜单。
-#   2026/05/02：1、增加二维码展示功能。
-#   2026/05/05：1、修复Trojan协议的二维码。2、修复caddy检查安装。
-#   2026/05/07：1、增加VLESS-REALITY-xhttp协议。2、修复当前协议判断，更详细。
-#   2026/05/08：增加各种验证、排错、去掉apt lock暴力解决，修改安全性配置。
-#   2026/05/09：优化代码，增加安装过程中可能出现的错误提示。
-#   2026/05/10：增加BBR安装菜单，增加防火墙智能策略，修复可能出现的错误提示，优化代码。
-#   2026/05/15：合并gen_vless_reality,gen_vless_reality_xhttp函数为gen_vless_reality_unified函数，优化代码。
-#   2026/05/17：修复check_current_protocol函数。
-#   2026/05/19：优化菜单选项,shellcheck。
-
 # ====================== 统一颜色管理 =======================
 RED='\033[31m'
 GREEN='\033[32m'
@@ -1533,7 +1508,15 @@ uninstall_all() {
 # --- 主菜单（保留原样，仅加强调用）---
 main_menu() {
     clear
-echo -e "${MAGENTA}======================= 系统状态检查 ======================${NC}"
+    OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
+    echo -e "${RED}====================== 脚本环境信息 =======================${NC}"
+    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/05/19   ${NC}"
+    echo -e "${RED}   名称：${NC}${BLUE}xray 一键安装脚本    ${NC}"
+    echo -e "${RED}   版本号：${NC}${BLUE}v1.0.05.19.22.02（Release）    ${NC}"
+    echo -e "${RED}   适用环境：${NC}${BLUE}Debian12/13、Ubuntu25/26    ${NC}"
+    echo -e "${RED}   当前系统：${NC}${GREEN}$OS_NAME    ${NC}"
+
+    echo -e "${MAGENTA}---------------------- 系统状态检查 -----------------------${NC}"
     # 1、vnstat 流量统计状态
     if command -v vnstat &> /dev/null && systemctl is-active --quiet vnstat; then
         echo -e "   流量统计 : ${GREEN}监控中... ✅${NC}"
@@ -1677,14 +1660,7 @@ echo -e "${MAGENTA}======================= 系统状态检查 ==================
     echo -e "   本机 IP  : ${GREEN}${local_ip}${NC}"
     # <--- 新增：打印端口信息，样式与 IP 保持一致
     echo -e "   服务端口 : ${GREEN}${current_port}${NC}" 
-    
-    OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
-    echo -e "${RED}===========================================================${NC}"
-    echo -e "${RED}   作者：人生若只如初见，更新：2026/05/19   ${NC}"
-    echo -e "${RED}   名称：xray 一键安装脚本    ${NC}"
-    echo -e "${RED}   版本号：v1.0.05.19.22.02（Release）    ${NC}"
-    echo -e "${RED}   适用环境：Debian12/13、Ubuntu25/26    ${NC}"
-    echo -e "${RED}   当前系统：${NC}${GREEN}$OS_NAME    ${NC}"
+
     echo -e "-----------------------------------------------------------"
     echo -e "${BLUE}  【1】 . 安装 VLESS-REALITY-Vision${NC}   ${RED}【推荐，最强隐蔽/不依赖域名】${NC}"
     echo -e "${BLUE}  【2】 . 安装 VLESS-REALITY-xhttp${NC}    ${CYAN}【最新黑科技/综合最强】${NC}"   
