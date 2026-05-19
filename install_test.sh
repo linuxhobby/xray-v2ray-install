@@ -23,7 +23,7 @@
 #   2026/05/10：增加BBR安装菜单，增加防火墙智能策略，修复可能出现的错误提示，优化代码。
 #   2026/05/15：合并gen_vless_reality,gen_vless_reality_xhttp函数为gen_vless_reality_unified函数，优化代码。
 #   2026/05/17：修复check_current_protocol函数。
-#   2026/05/18：优化菜单选项。
+#   2026/05/19：优化菜单选项,shellcheck。
 
 # ====================== 统一颜色管理 =======================
 RED='\033[31m'
