@@ -26,19 +26,19 @@
 #   2026/05/18：优化菜单选项。
 # ====================================================
 # 终端颜色定义
-Font_Black="\033[30m"   # 黑色
-Font_Red="\033[31m"     # 红色
-Font_Green="\033[32m"   # 绿色
-Font_Yellow="\033[33m"  # 黄色
-Font_Blue="\033[34m"    # 蓝色
-Font_Magenta="\033[35m" # 洋红色/紫色
-Font_Cyan="\033[36m"    # 青色
-Font_White="\033[37m"   # 白色
-Font_Suffix="\033[0m"   # 重置颜色/颜色结尾
+declare -r Font_Black="\033[30m"    # 黑色
+declare -r Font_Red="\033[31m"      # 红色
+declare -r Font_Green="\033[32m"    # 绿色
+declare -r Font_Yellow="\033[33m"   # 黄色
+declare -r Font_Blue="\033[34m"     # 蓝色
+declare -r Font_Magenta="\033[35m"  # 洋红色/紫色
+declare -r Font_Cyan="\033[36m"     # 青色
+declare -r Font_White="\033[37m"    # 白色
+declare -r Font_Suffix="\033[0m"    # 重置颜色/颜色结尾
 
 # 架构检测，如果不支持，直接不运行
 ARCH=$(uname -m)
-case ${ARCH} in
+case "${ARCH}" in
     x86_64)   XRAY_ARCH="64" ;;
     aarch64)  XRAY_ARCH="arm64" ;;
     armv7l)   XRAY_ARCH="arm32-v7a" ;;
@@ -51,17 +51,24 @@ echo -e "${Font_Cyan}检测到系统架构: ${ARCH} (${XRAY_ARCH})${Font_Suffix}
 set -e
 set -o pipefail
 # 捕获错误，打印行号和出错命令
-trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 $LINENO 行执行失败！\n出错命令: $BASH_COMMAND${Font_Suffix}"' ERR
+#trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 $LINENO 行执行失败！\n出错命令: $BASH_COMMAND${Font_Suffix}"' ERR
+trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 ${LINENO} 行执行失败！\n出错命令: ${BASH_COMMAND}${Font_Suffix}" >&2' ERR
+# ====================== 全局配置（集中管理）======================
+declare -r is_core="xray"
+declare -r conf_dir="/usr/local/etc/xray"
+declare -r config_path="${conf_dir}/config.json"
+declare -r service_file="/etc/systemd/system/xray.service"
+declare -r caddyfile_path="/etc/caddy/Caddyfile"
 
-# ------------- 全局变量定义区域 SRTART -------------
-# 变量初始化
-is_core="xray"
-conf_dir="/usr/local/etc/xray"
-config_path="${conf_dir}/config.json"
-PRESET_DOMAIN="vc.myvpsworld.top" #如果为空，安装过程中手动输入
-XRAY_VERSION="26.5.3"   #最新版 latest
-CADDY_VERSION="2.11.2"
-FIX_VER=1 #1，锁定。0，最新版#
+declare -r PRESET_DOMAIN="vcc.myvpsworld.top"
+declare -r XRAY_VERSION="26.5.3"
+declare -r CADDY_VERSION="2.11.2"
+declare -r FIX_VER=1                # 1=锁定版本，0=允许自动更新
+KIP_FIREWALL="false"   # 设置为 true 可跳过防火墙
+
+# 默认端口（可后续通过参数修改）
+declare -r DEFAULT_PORT=443
+declare -r DEFAULT_SSH_PORT=22
 
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
@@ -71,6 +78,12 @@ REALITY_DEST_OPTIONS=(
     "www.cloudflare.com"
     "www.bing.com"
 )
+
+# ====================== 参数解析 ======================
+if [[ "$1" == "--skip-firewall" ]] || [[ "$1" == "-sf" ]]; then
+    SKIP_FIREWALL="true"
+    echo -e "$$   {Font_Yellow}已启用 --skip-firewall 模式   $${Font_Suffix}"
+fi
 # ------------- 全局变量定义区域 END；自定义函数区域 SRTART -------------
 # 自定义函数：随机选择函数
 get_random_dest() {
@@ -79,16 +92,17 @@ get_random_dest() {
 }
 # 自定义函数：检查当前 user root
 check_root() {
-    if [ "$EUID" -ne 0 ]; then
+    if [[ "$EUID" -ne 0 ]]; then
         echo -e "${Font_Red}必须以 root 权限运行此脚本！${Font_Suffix}"
         exit 1
     fi
 }
 
+# 通用错误检查函数
 check_command() {
     if ! "$@"; then
-        echo -e "${Font_Red}[ERROR] 命令执行失败: $*${Font_Suffix}"
-        echo -e "${Font_Red}请查看上方错误信息，脚本已停止执行。${Font_Suffix}"
+        echo -e "${Font_Red}[ERROR] 命令执行失败: $*${Font_Suffix}" >&2
+        echo -e "${Font_Yellow}最近日志：${Font_Suffix}"
         journalctl -u xray --no-pager -n 50 2>/dev/null || true
         journalctl -u caddy --no-pager -n 50 2>/dev/null || true
         exit 1
@@ -135,13 +149,41 @@ check_json() {
 
 #自定义函数：端口检测函数
 check_port() {
-    local port=$1
+    local port="$1"
+    local protocol="${2:-tcp}"   # 默认检查 tcp，也可传 udp
 
-    if ss -tulnp 2>/dev/null | grep -q ":$port "; then
-        echo -e "${Font_Red}[ERROR] 端口 $port 已被占用${Font_Suffix}"
-        ss -tulnp | grep ":$port "
-        exit 1
+    echo -e "${Font_Cyan}正在检测端口 ${port} 是否被占用...${Font_Suffix}"
+
+    # 多工具全面检测
+    if ss -tulnp 2>/dev/null | grep -q ":${port} "; then
+        echo -e "${Font_Red}[ERROR] 端口 ${port} 已被占用 (ss)${Font_Suffix}"
+        ss -tulnp 2>/dev/null | grep ":${port} " | head -n 3
+        return 1
     fi
+
+    if netstat -tulnp 2>/dev/null | grep -q ":${port} "; then
+        echo -e "${Font_Red}[ERROR] 端口 ${port} 已被占用 (netstat)${Font_Suffix}"
+        netstat -tulnp 2>/dev/null | grep ":${port} " | head -n 3
+        return 1
+    fi
+
+    if lsof -i "${protocol}:${port}" 2>/dev/null | grep -q LISTEN; then
+        echo -e "${Font_Red}[ERROR] 端口 ${port} 已被占用 (lsof)${Font_Suffix}"
+        lsof -i "${protocol}:${port}" 2>/dev/null | head -n 5
+        return 1
+    fi
+
+    # 额外检查常见冲突服务（80/443 特别重要）
+    if [[ "${port}" -eq 80 ]] || [[ "${port}" -eq 443 ]]; then
+        if pgrep -f "nginx\|apache2\|httpd" > /dev/null; then
+            echo -e "${Font_Red}[ERROR] 检测到 nginx/apache/httpd 正在运行，可能与 Caddy 冲突！${Font_Suffix}"
+            echo -e "${Font_Yellow}建议先停止它们：systemctl stop nginx apache2 httpd${Font_Suffix}"
+            return 1
+        fi
+    fi
+
+    echo -e "${Font_Green}[OK] 端口 ${port} 可用${Font_Suffix}"
+    return 0
 }
 
 #自定义函数：Caddy 配置检查函数
@@ -153,7 +195,7 @@ check_caddy() {
 
     # 检查配置语法
     caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1
-    if [ $? -ne 0 ]; then
+    if [[ $? -ne 0 ]]; then
         echo -e "${Font_Red}[ERROR] Caddyfile 语法错误${Font_Suffix}"
         caddy validate --config /etc/caddy/Caddyfile
         exit 1
@@ -197,25 +239,47 @@ check_dependencies() {
 }
 # 自定义函数：强制开启防火墙函数
 enable_firewall() {
-    echo -e "${Font_Cyan}>>> 配置安全防火墙...${Font_Suffix}"
-    # 确保安装了 ufw
-    apt-get install -y ufw -qq
-    # 【自动识别】获取当前 sshd 实际监听的端口
-    local ssh_port=$(ss -tlnp | grep sshd | awk '{print $4}' | awk -F':' '{print $NF}' | head -n1)
-    # 如果没识别到（极少数情况），则尝试从配置文件读取，最后默认 22
-    if [[ -z "$ssh_port" ]]; then
-        ssh_port=$(grep "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
+    echo -e "${Font_Cyan}正在配置防火墙...${Font_Suffix}"
+    
+    # 新增：支持跳过参数
+    if [[ "$SKIP_FIREWALL" == "true" ]]; then
+        echo -e "${Font_Yellow}已跳过防火墙配置。${Font_Suffix}"
+        return 0
     fi
-    echo -e "${Font_Yellow}检测到当前 SSH 端口为: ${ssh_port}${Font_Suffix}"
-    ufw default allow outgoing
-    ufw default deny incoming
-    ufw limit "${ssh_port}/tcp" comment 'SSH-Port-Auto-Detected'
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 443/udp
-    echo "y" | ufw enable 
-    echo -e "${Font_Green}[OK] 防火墙已启动，已自动放行 SSH 端口 ${ssh_port}。${Font_Suffix}"
+
+    # 检测已有防火墙工具
+    if command -v ufw >/dev/null 2>&1; then
+        echo -e "${Font_Cyan}检测到 ufw，正在配置...${Font_Suffix}"
+        check_command ufw --force enable
+        check_command ufw default deny incoming
+        check_command ufw default allow outgoing
+        check_command ufw allow ssh
+        check_command ufw allow 80/tcp
+        check_command ufw allow 443/tcp
+        check_command ufw reload
+        echo -e "${Font_Green}ufw 配置完成${Font_Suffix}"
+        
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        echo -e "${Font_Cyan}检测到 firewalld，正在配置...${Font_Suffix}"
+        check_command systemctl enable --now firewalld
+        check_command firewall-cmd --permanent --add-service=ssh
+        check_command firewall-cmd --permanent --add-port=80/tcp
+        check_command firewall-cmd --permanent --add-port=443/tcp
+        check_command firewall-cmd --reload
+        echo -e "${Font_Green}firewalld 配置完成${Font_Suffix}"
+        
+    elif command -v iptables >/dev/null 2>&1; then
+        echo -e "${Font_Cyan}检测到 iptables，正在配置...${Font_Suffix}"
+        check_command iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+        check_command iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+        check_command iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+        check_command iptables -A INPUT -j DROP
+        echo -e "${Font_Green}iptables 基础规则已添加（注意：非持久化）${Font_Suffix}"
+    else
+        echo -e "${Font_Yellow}未检测到 ufw/firewalld/iptables，跳过防火墙配置。${Font_Suffix}"
+    fi
 }
+
 # 自定义函数：时区检查函数
 check_and_set_timezone() {
     local current_tz=$(timedatectl | grep "Time zone" | awk '{print $3}' 2>/dev/null || date +%Z)
@@ -264,8 +328,8 @@ menu_bbr() {
     local kernel_version=$(uname -r)
     local current_algo=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}' 2>/dev/null || echo "未知")
     local v3_support="${Font_Red}不支持 v3${Font_Suffix}"
-    local ver_main=$(echo $kernel_version | cut -d. -f1)
-    local ver_sub=$(echo $kernel_version | cut -d. -f2)
+    local ver_main=$(echo "$kernel_version" | cut -d. -f1)
+    local ver_sub=$(echo "$kernel_version" | cut -d. -f2)
     if [ "$ver_main" -gt 6 ] || { [ "$ver_main" -eq 6 ] && [ "$ver_sub" -ge 4 ]; }; then
         v3_support="${Font_Green}支持 v3${Font_Suffix}"
     fi
@@ -397,22 +461,37 @@ EOF
 
 # --- 1.5. Caddy 安装函数（完全保留）---
 install_caddy() {
-    if ! command -v caddy &> /dev/null; then
-        echo -e "${Font_Cyan}正在安装 Caddy v${CADDY_VERSION}...${Font_Suffix}"
-        rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-        check_command curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        check_command curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-        check_command apt-get update -qq
-        check_command apt-get install caddy=${CADDY_VERSION} -y || check_command apt-get install caddy -y
-        if [ "$FIX_VER" -eq 1 ] && command -v caddy &> /dev/null; then
-            apt-mark hold caddy
-        fi
-        if ! command -v caddy &> /dev/null; then
-            echo -e "${Font_Red}[X] Caddy 安装失败！${Font_Suffix}"
-            exit 1
-        fi
-        echo -e "${Font_Green}[OK] Caddy 安装成功${Font_Suffix}"
+    if command -v caddy &> /dev/null; then
+        echo -e "${Font_Green}[OK] Caddy 已安装，跳过。${Font_Suffix}"
+        return 0
     fi
+
+    echo -e "${Font_Cyan}正在安装 Caddy...${Font_Suffix}"
+
+    # 清理旧密钥和源（防止冲突）
+    rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null
+
+    # 推荐官方安装方式（更稳定，减少 gpg 维护）
+    check_command apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+    check_command curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    check_command curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+
+    check_command apt-get update -qq
+
+    # 安装策略：优先指定版本，失败则安装最新版
+    if ! check_command apt-get install -y caddy=${CADDY_VERSION} 2>/dev/null; then
+        echo -e "${Font_Yellow}指定版本 ${CADDY_VERSION} 安装失败，尝试安装最新版...${Font_Suffix}"
+        check_command apt-get install -y caddy
+    fi
+
+    # 版本锁定（保持原有逻辑）
+    if [[ "$FIX_VER" -eq 1 ]] && command -v caddy &> /dev/null; then
+        apt-mark hold caddy
+        echo -e "${Font_Green}[OK] Caddy 已安装并锁定版本${Font_Suffix}"
+    else
+        echo -e "${Font_Green}[OK] Caddy 安装完成（未锁定）${Font_Suffix}"
+    fi
+
     mkdir -p /etc/caddy
 }
 # --- 域名解析检测（完全保留）---
@@ -586,6 +665,9 @@ gen_vless_reality_unified() {
     "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_json "$config_path"
     systemctl daemon-reload
     restart_service xray
@@ -611,7 +693,10 @@ gen_vless_ws() {
     local uuid=$(cat /proc/sys/kernel/random/uuid)
     local path=$(openssl rand -hex 6)
     local port=10001
-    check_port $port
+    if ! check_port "$port"; then
+        echo -e "$$   {Font_Red}端口冲突，请先解决后再运行脚本。   $${Font_Suffix}"
+        exit 1
+    fi
     echo -e "${Font_Cyan}正在配置 VLESS-WS-TLS (Caddy 反代)...${Font_Suffix}"
     cat <<EOF > "$config_path"
 {
@@ -640,6 +725,9 @@ EOF
     reverse_proxy /$path 127.0.0.1:$port
 }" > /etc/caddy/Caddyfile
 
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -662,7 +750,10 @@ gen_vless_grpc() {
     local uuid=$(cat /proc/sys/kernel/random/uuid)
     local serviceName=$(openssl rand -hex 4)
     local port=10002
-    check_port $port
+    if ! check_port "$port"; then
+        echo -e "$$   {Font_Red}端口冲突，请先解决后再运行脚本。   $${Font_Suffix}"
+        exit 1
+    fi
     echo -e "${Font_Cyan}正在配置 VLESS-gRPC-TLS...${Font_Suffix}"
     cat <<EOF > "$config_path"
 {
@@ -694,6 +785,9 @@ EOF
         }
     }
 }" > /etc/caddy/Caddyfile
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -717,7 +811,10 @@ gen_vless_xhttp() {
     local uuid=$(cat /proc/sys/kernel/random/uuid)
     local path=$(openssl rand -hex 6)
     local port=10003
-    check_port $port
+    if ! check_port "$port"; then
+        echo -e "$$   {Font_Red}端口冲突，请先解决后再运行脚本。   $${Font_Suffix}"
+        exit 1
+    fi
     echo -e "${Font_Cyan}正在配置 VLESS-XHTTP-TLS...${Font_Suffix}"
     # 修改点 1：明确指定 XHTTP 的工作模式为 auto
     cat <<EOF > "$config_path"
@@ -756,6 +853,9 @@ EOF
     }
 }" > /etc/caddy/Caddyfile
 
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -810,6 +910,9 @@ $domain {
     reverse_proxy /$path 127.0.0.1:$port
 }
 EOF
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -837,7 +940,10 @@ gen_trojan_grpc() {
     [[ -z "$uuid" ]] && uuid=$(openssl rand -hex 6)
     local serviceName=$(openssl rand -hex 8)   # 加长一点
     local port=10005
-    check_port $port
+    if ! check_port "$port"; then
+        echo -e "$$   {Font_Red}端口冲突，请先解决后再运行脚本。   $${Font_Suffix}"
+        exit 1
+    fi
     echo -e "${Font_Cyan}正在配置 Trojan-gRPC-TLS...${Font_Suffix}"
     # === Xray 配置（Trojan + gRPC）===
     cat <<EOF > "$config_path"
@@ -873,6 +979,9 @@ $domain {
 }
 EOF
 
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"  
     restart_service caddy
@@ -928,6 +1037,9 @@ $domain {
 }
 EOF
 
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path"
     restart_service caddy
@@ -990,6 +1102,9 @@ $domain {
 }
 EOF
 
+    # 关键端口预检
+    check_port 80 || exit 1
+    check_port 443 || exit 1
     check_caddy
     check_json "$config_path" 
     restart_service caddy
