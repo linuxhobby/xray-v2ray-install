@@ -54,21 +54,20 @@ set -o pipefail
 #trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 $LINENO 行执行失败！\n出错命令: $BASH_COMMAND${Font_Suffix}"' ERR
 trap 'echo -e "\n${Font_Red}[ERROR] 脚本在第 ${LINENO} 行执行失败！\n出错命令: ${BASH_COMMAND}${Font_Suffix}" >&2' ERR
 # ====================== 全局配置（集中管理）======================
-declare -r is_core="xray"
-declare -r conf_dir="/usr/local/etc/xray"
-declare -r config_path="${conf_dir}/config.json"
-declare -r service_file="/etc/systemd/system/xray.service"
-declare -r caddyfile_path="/etc/caddy/Caddyfile"
-
-declare -r PRESET_DOMAIN="vcc.myvpsworld.top"
-declare -r XRAY_VERSION="26.5.3"
-declare -r CADDY_VERSION="2.11.2"
-declare -r FIX_VER=1                # 1=锁定版本，0=允许自动更新
+is_core="xray"
+conf_dir="/usr/local/etc/xray"
+config_path="${conf_dir}/config.json"
+service_file="/etc/systemd/system/xray.service"
+caddyfile_path="/etc/caddy/Caddyfile"
+PRESET_DOMAIN="vcc.myvpsworld.top"
+XRAY_VERSION="26.5.3"
+CADDY_VERSION="2.11.2"
+FIX_VER=1                # 1=锁定版本，0=允许自动更新
 KIP_FIREWALL="false"   # 设置为 true 可跳过防火墙
 
 # 默认端口（可后续通过参数修改）
-declare -r DEFAULT_PORT=443
-declare -r DEFAULT_SSH_PORT=22
+DEFAULT_PORT=443
+DEFAULT_SSH_PORT=22
 
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
