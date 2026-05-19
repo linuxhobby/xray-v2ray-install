@@ -66,7 +66,6 @@ set -o pipefail
 trap 'echo -e "\n${RED}[ERROR] 脚本在第 $LINENO 行执行失败！\n出错命令: $BASH_COMMAND${NC}"' ERR
 
 # ------------- 全局变量定义区域 SRTART -------------
-# 变量初始化
 is_core="xray"
 conf_dir="/usr/local/etc/xray"
 config_path="${conf_dir}/config.json"
@@ -77,15 +76,18 @@ FIX_VER=1 #1，锁定。0，最新版#
 
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
-    "www.microsoft.com"
-    "www.apple.com"
-    "www.amazon.com"
-    "www.cloudflare.com"
-    "www.bing.com"
+    "www.microsoft.com"          # 微软，极稳定
+    "www.apple.com"              # 苹果，极稳定
+    "www.bing.com"               # 微软搜索，直连很好
+    "www.cloudflare.com"         # Cloudflare
+    "www.amazon.com"             # 亚马逊
+    "www.adobe.com"              # Adobe
+    "www.oracle.com"             # Oracle
+    "www.ibm.com"                # IBM
+    "www.cisco.com"              # Cisco
 )
-# ------------- 全局变量定义区域 END -------------
 
-# ------------- 自定义函数区域 SRTART -------------
+# ------------- 全局变量定义区域 END；自定义函数区域 SRTART -------------
 # 自定义函数：随机选择函数
 get_random_dest() {
     local idx=$((RANDOM % ${#REALITY_DEST_OPTIONS[@]}))
@@ -99,6 +101,7 @@ check_root() {
     fi
 }
 
+# 自定义函数：错误信息检查
 check_command() {
     if ! "$@"; then
         echo -e "${RED}[ERROR] 命令执行失败: $*${NC}"
@@ -110,6 +113,7 @@ check_command() {
     return 0
 }
 
+# 自定义函数：建立xray用户和权限
 setup_xray_user() {
     useradd -r -s /bin/false -U xray 2>/dev/null || true
     mkdir -p "$conf_dir"
@@ -197,7 +201,6 @@ check_service_alive() {
 }
 
 #自定义函数：TCP检查
-#自定义函数：TCP检查（已优化 Reality 协议）
 check_external_tcp() {
     local host=$1
     local port=$2
@@ -274,7 +277,6 @@ enable_firewall() {
     fi
 }
 
-
 # 自定义函数：时区检查函数
 check_and_set_timezone() {
     local current_tz
@@ -330,9 +332,8 @@ enable_bbr() {
         fi
     fi
 }
-# ------------- 自定义函数区域 END -------------
 
-# ------------- BBR 管理子菜单 START -------------
+# ------------- 自定义函数区域 END；BBR 管理子菜单 START -------------
 # BBR 管理子菜单
 menu_bbr() {
     clear
@@ -695,52 +696,57 @@ check_current_protocol() {
 }
 # ------------------------------------------------ 核心协议模块 ------------------------------------------------
 gen_vless_reality_unified() {
-    local mode=$1
-    if [ "$mode" = "vision" ]; then
-        echo -e "${CYAN}正在配置 VLESS-REALITY-Vision...${NC}"
-        local flow=', "flow": "xtls-rprx-vision"'
-        local network="tcp"
-        local extra_settings=""
-    else
-        echo -e "${CYAN}正在配置 VLESS-REALITY-xhttp...${NC}"
-        local flow=""
-        local network="xhttp"
+    local mode="$1"
 
-        local path
+    # ==================== 公共初始化 ====================
+    echo -e "${CYAN}正在配置 VLESS-REALITY-${mode^}...${NC}"
+
+    local flow=""
+    local network="tcp"
+    local extra_settings=""
+    local path=""
+
+    if [ "$mode" = "xhttp" ]; then
+        network="xhttp"
         path=$(openssl rand -hex 6)
-
-        local extra_settings
-        extra_settings='"xhttpSettings": {"path": "/'$path'", "mode": "auto"},'
+        extra_settings='"xhttpSettings": {"path": "/'"$path"'", "mode": "auto"},'
+    else
+        flow=', "flow": "xtls-rprx-vision"'
     fi
 
     local config_path="/usr/local/etc/xray/config.json"
     local conf_dir="/usr/local/etc/xray"
     mkdir -p "$conf_dir"
 
+    # Xray 二进制路径
     local xray_bin="/usr/local/bin/xray"
-    [[ ! -f "$xray_bin" ]] && xray_bin=$(command -v xray)
+    if [ ! -f "$xray_bin" ]; then
+        xray_bin=$(command -v xray)
+    fi
 
+    # 生成必要参数
     local uuid
     uuid=$(cat /proc/sys/kernel/random/uuid)
-    
+
     local keys
     keys=$("$xray_bin" x25519 2>/dev/null)
-    
+
     local priv_key
     priv_key=$(echo "$keys" | awk -F': ' '/Private/ {print $2}' | tr -d ' ')
-    
+
     local pub_key
     pub_key=$(echo "$keys" | awk -F': ' '/Public/ {print $2}' | tr -d ' ')
-    
+
     local short_id
     short_id=$(openssl rand -hex 8)
-    
+
     local dest_server
     dest_server=$(get_random_dest || echo "www.microsoft.com")
 
     echo -e "${CYAN}本次 Reality 伪装站点：${GREEN}$dest_server${NC}"
     echo "$pub_key" > "${conf_dir}/pub.key" 2>/dev/null || true
 
+    # ==================== 生成 Xray 配置 ====================
     cat <<EOF > "$config_path"
 {
     "log": { "loglevel": "warning" },
@@ -769,19 +775,19 @@ gen_vless_reality_unified() {
 }
 EOF
 
+    # ==================== 后续统一处理 ====================
     check_json "$config_path"
     systemctl daemon-reload
     restart_service xray
 
-    # Reality 协议已通过 check_service_alive / check_external_tcp 放行
     echo -e "${YELLOW}Reality 协议启动完成，跳过端口可达性检查${NC}"
 
+    # 显示配置信息
     if [ "$mode" = "vision" ]; then
         show_protocol_info "REALITY-Vision" "$uuid" "$dest_server" "$pub_key" "$short_id"
     else
         show_protocol_info "REALITY-xHTTP" "$uuid" "$dest_server" "$pub_key" "$short_id" "$path"
     fi
-    
 }
 
 # ==================== 【新】TLS 协议统一函数（用于 3~9）====================
@@ -1288,7 +1294,8 @@ show_protocol_info() {
 
     case "$protocol_type" in
         "REALITY-Vision")
-            link="vless://$uuid@$ip:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=tcp#$ps_name"
+            # 修正版：确保UUID正确插入
+            link="vless://${uuid}@${ip}:443?security=reality&encryption=none&pbk=${extra2}&headerType=none&fp=chrome&flow=xtls-rprx-vision&sni=${extra1}&sid=${extra3}&type=tcp#${ps_name}"
             echo -e "${CYAN}流控 (Flow)     : ${GREEN}xtls-rprx-vision${NC}"
             echo -e "${CYAN}安全 (Security) : ${GREEN}reality${NC}"
             echo -e "${CYAN}SNI / 伪装域名  : ${GREEN}$extra1${NC}"
@@ -1298,7 +1305,7 @@ show_protocol_info() {
             ;;
 
         "REALITY-xHTTP")
-            link="vless://$uuid@$ip:443?encryption=none&security=reality&sni=$extra1&fp=chrome&pbk=$extra2&sid=$extra3&type=xhttp&path=%2F$extra4#$ps_name"
+            link="vless://${uuid}@${ip}:443?security=reality&encryption=none&pbk=${extra2}&headerType=none&fp=chrome&type=xhttp&path=%2F${extra4}&sni=${extra1}&sid=${extra3}#${ps_name}"
             echo -e "${CYAN}安全 (Security) : ${GREEN}reality${NC}"
             echo -e "${CYAN}SNI / 伪装域名  : ${GREEN}$extra1${NC}"
             echo -e "${CYAN}Public Key      : ${GREEN}$extra2${NC}"
@@ -1675,7 +1682,7 @@ echo -e "${MAGENTA}======================= 系统状态检查 ==================
     echo -e "${RED}===========================================================${NC}"
     echo -e "${RED}   作者：人生若只如初见，更新：2026/05/19   ${NC}"
     echo -e "${RED}   名称：xray 一键安装脚本    ${NC}"
-    echo -e "${RED}   版本号：v1.0.05.19.19.55（Release）    ${NC}"
+    echo -e "${RED}   版本号：v1.0.05.19.22.02（Release）    ${NC}"
     echo -e "${RED}   适用环境：Debian12/13、Ubuntu25/26    ${NC}"
     echo -e "${RED}   当前系统：${NC}${GREEN}$OS_NAME    ${NC}"
     echo -e "-----------------------------------------------------------"
@@ -1696,37 +1703,39 @@ echo -e "${MAGENTA}======================= 系统状态检查 ==================
     echo -e "${GREEN}  【d】 . 卸载与清理${NC}"
     echo -e "${YELLOW}  【q】 . 退出脚本${NC}" 
     echo -e "-----------------------------------------------------------"
+    while true; do
     read -r -p "请选择: " num
+    
+    if [[ -z "$num" ]]; then
+        echo -e "${RED}输入不能为空，请重新输入！${NC}"
+        continue
+    fi
 
-    # ==================== 执行逻辑 ====================
     if [[ -n "${PROTOCOL_CONFIG[$num]}" ]]; then
         IFS='|' read -r _ _ _ _ _ _ cmd <<< "${PROTOCOL_CONFIG[$num]}"
         
-        # 确保安装协议时先执行环境准备
         if [[ "$num" == [1-9] ]]; then
             preparation_stack
         fi
         
         $cmd
-
         echo -e "${GREEN}安装完成，请按回车键返回主菜单...${NC}"
-        read -r dummy
+        read -r
         main_menu
-    else
-        case "$num" in
-            c|C) check_current_protocol ;;
-            v|V) show_usage ;;
-            b|B) menu_bbr ;;
-            d|D) uninstall_all ;;
-            q|Q) exit 0 ;;
-            *) 
-                echo -e "${RED}输入错误，请重新选择！${NC}"
-                sleep 1
-                ;;
-        esac
-        read -r dummy
-        main_menu
+        return
     fi
+
+    case "$num" in
+        c|C) check_current_protocol; main_menu; return ;;
+        v|V) show_usage; main_menu; return ;;
+        b|B) menu_bbr; main_menu; return ;;
+        d|D) uninstall_all; main_menu; return ;;
+        q|Q) exit 0 ;;
+        *) 
+            echo -e "${RED}输入错误，请重新选择！${NC}"
+            ;;
+    esac
+done
 }
 # 脚本入口
 check_root
