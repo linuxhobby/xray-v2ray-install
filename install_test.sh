@@ -302,24 +302,28 @@ check_dependencies() {
 }
 
 # 自定义函数：强制开启防火墙函数
+# 自定义函数：强制开启防火墙函数（包含自动安装逻辑）
 enable_firewall() {
     echo -e "${CYAN}>>> 配置防火墙...${NC}"
 
-    # 支持跳过（之前全局变量已有）
     if [[ "${SKIP_FIREWALL}" == "true" ]]; then
         echo -e "${YELLOW}已跳过防火墙配置。${NC}"
         return 0
     fi
 
-    # 智能检测当前系统防火墙工具
-    if command -v ufw >/dev/null 2>&1; then
-        echo -e "${CYAN}检测到 ufw，正在配置...${NC}"
+    # 智能检测及安装逻辑
+    if command -v apt-get >/dev/null 2>&1; then
+        # Debian/Ubuntu 系列优先使用 ufw
+        if ! command -v ufw >/dev/null 2>&1; then
+            echo -e "${CYAN}未检测到 ufw，正在安装...${NC}"
+            apt-get update -y && apt-get install -y ufw
+        fi
         
-        ufw --force reset >/dev/null 2>&1 || true
+        # 配置 ufw
+        ufw --force reset >/dev/null 2>&1
         ufw default allow outgoing
         ufw default deny incoming
         
-        # 智能获取 SSH 端口
         local ssh_port
         ssh_port=$(ss -tlnp 2>/dev/null | grep sshd | awk '{print $4}' | cut -d: -f2 | head -n1)
         [[ -z "$ssh_port" ]] && ssh_port=$(grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
@@ -331,21 +335,28 @@ enable_firewall() {
         
         echo "y" | ufw enable >/dev/null 2>&1
         ufw reload >/dev/null 2>&1
-        
         echo -e "${GREEN}[OK] ufw 配置完成（SSH端口: ${ssh_port}）${NC}"
 
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        echo -e "${CYAN}检测到 firewalld，正在配置...${NC}"
-        systemctl enable --now firewalld 2>/dev/null || true
+    elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+        # CentOS/RHEL/Fedora 系列优先使用 firewalld
+        local pkg_manager
+        pkg_manager=$(command -v dnf >/dev/null 2>&1 && echo "dnf" || echo "yum")
+        
+        if ! command -v firewall-cmd >/dev/null 2>&1; then
+            echo -e "${CYAN}未检测到 firewalld，正在安装...${NC}"
+            $pkg_manager install -y firewalld
+        fi
+        
+        systemctl enable --now firewalld
         firewall-cmd --permanent --add-service=ssh
         firewall-cmd --permanent --add-port=80/tcp
         firewall-cmd --permanent --add-port=443/tcp
         firewall-cmd --permanent --add-port=443/udp
         firewall-cmd --reload
         echo -e "${GREEN}[OK] firewalld 配置完成${NC}"
-
     else
-        echo -e "${YELLOW}未检测到 ufw 或 firewalld，跳过防火墙配置。${NC}"
+        echo -e "${RED}[ERROR] 未知的操作系统类型，无法自动安装防火墙。${NC}"
+        return 1
     fi
 }
 
@@ -527,15 +538,13 @@ preparation_stack() {
     echo -e "${CYAN}>>> 正在处理 apt 锁...${NC}"
     apt-get -o DPkg::Lock::Timeout=180 update --allow-releaseinfo-change -qq || true
     dpkg --configure -a
-
+    
     # 调用防火墙策略函数
     enable_firewall
-    
-    # 调用开启BBR函数
-    enable_bbr
-    
     # 调用依赖检查函数
     check_dependencies
+    # 调用开启BBR函数
+    enable_bbr
 
     systemctl enable vnstat --now 2>/dev/null || true
 
