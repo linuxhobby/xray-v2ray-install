@@ -302,7 +302,6 @@ check_dependencies() {
 }
 
 # 自定义函数：强制开启防火墙函数
-# 自定义函数：强制开启防火墙函数（包含自动安装逻辑）
 enable_firewall() {
     echo -e "${CYAN}>>> 配置防火墙...${NC}"
 
