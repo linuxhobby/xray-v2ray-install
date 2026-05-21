@@ -10,17 +10,17 @@ CYAN='\033[36m'
 NC='\033[0m'
 
 # ====================== 协议配置中心（核心数据驱动）======================
-# 格式: "编号|协议全称|network|inbound_proto|显示名称|是否需要密码(1=是)"
+# 格式: "编号|协议全称|network|inbound_proto|显示名称|是否需要密码(1=是)|端口|生成函数"
 declare -A PROTOCOL_CONFIG
-PROTOCOL_CONFIG[1]="1|REALITY-Vision|tcp|vless|REALITY-Vision|0|gen_vless_reality_unified vision"
-PROTOCOL_CONFIG[2]="2|REALITY-xHTTP|xhttp|vless|REALITY-xHTTP|0|gen_vless_reality_unified xhttp"
-PROTOCOL_CONFIG[3]="3|VLESS-WS-TLS|ws|vless|VLESS-WS-TLS|0|gen_vless_ws"
-PROTOCOL_CONFIG[4]="4|VLESS-gRPC-TLS|grpc|vless|VLESS-gRPC-TLS|0|gen_vless_grpc"
-PROTOCOL_CONFIG[5]="5|VLESS-XHTTP-TLS|xhttp|vless|VLESS-XHTTP-TLS|0|gen_vless_xhttp"
-PROTOCOL_CONFIG[6]="6|Trojan-WS-TLS|ws|trojan|Trojan-WS-TLS|0|gen_trojan_ws"
-PROTOCOL_CONFIG[7]="7|Trojan-gRPC-TLS|grpc|trojan|Trojan-gRPC-TLS|0|gen_trojan_grpc"
-PROTOCOL_CONFIG[8]="8|VMess-WS-TLS|ws|vmess|VMess-WS-TLS|0|gen_vmess_ws"
-PROTOCOL_CONFIG[9]="9|VMess-gRPC-TLS|grpc|vmess|VMess-gRPC-TLS|0|gen_vmess_grpc"
+PROTOCOL_CONFIG[1]="1|REALITY-Vision|tcp|vless|REALITY-Vision|0|443|gen_vless_reality_unified vision"
+PROTOCOL_CONFIG[2]="2|REALITY-xHTTP|xhttp|vless|REALITY-xHTTP|0|443|gen_vless_reality_unified xhttp"
+PROTOCOL_CONFIG[3]="3|VLESS-WS-TLS|ws|vless|VLESS-WS-TLS|0|10001|gen_vless_ws"
+PROTOCOL_CONFIG[4]="4|VLESS-gRPC-TLS|grpc|vless|VLESS-gRPC-TLS|0|10002|gen_vless_grpc"
+PROTOCOL_CONFIG[5]="5|VLESS-XHTTP-TLS|xhttp|vless|VLESS-XHTTP-TLS|0|10003|gen_vless_xhttp"
+PROTOCOL_CONFIG[6]="6|Trojan-WS-TLS|ws|trojan|Trojan-WS-TLS|1|10004|gen_trojan_ws"
+PROTOCOL_CONFIG[7]="7|Trojan-gRPC-TLS|grpc|trojan|Trojan-gRPC-TLS|1|10005|gen_trojan_grpc"
+PROTOCOL_CONFIG[8]="8|VMess-WS-TLS|ws|vmess|VMess-WS-TLS|0|10006|gen_vmess_ws"
+PROTOCOL_CONFIG[9]="9|VMess-gRPC-TLS|grpc|vmess|VMess-gRPC-TLS|0|10007|gen_vmess_grpc"
 
 
 # ====================== 架构检测，如果不支持，直接不运行 ======================
@@ -88,7 +88,7 @@ check_command() {
     fi
 }
 
-# 自定义函数：错误信息检查（519新增）
+# 自定义函数：IP检测（519新增）
 get_local_ip() {
     local ip
     local timeout=5
@@ -629,7 +629,7 @@ install_caddy() {
     mkdir -p /etc/caddy
 }
 
-# --- 域名解析检测（完全保留）---
+# --- 域名解析检测（优化版）---
 check_domain() {
     local domain=""
     while true; do
@@ -645,15 +645,16 @@ check_domain() {
         local local_ipv4
         local_ipv4=$(get_local_ip)
         
+        if [[ -z "$local_ipv4" ]]; then
+            echo -e "${RED}[ERROR] 获取本机 IP 失败${NC}"
+            exit 1
+        fi
+        
         local local_ipv6
         local_ipv6=$(curl -6 -s --connect-timeout 5 ip.sb || echo "")
         
         local resolved_ips
         resolved_ips=$(dig +short "$domain" A 2>/dev/null)
-        if [[ -z "$local_ipv4" ]]; then
-            echo -e "${RED}[ERROR] 获取本机 IP 失败${NC}"
-            exit 1
-        fi
         
         echo -e "${CYAN}本机 IPv4: $local_ipv4${NC}"
         echo -e "${CYAN}本机 IPv6: $local_ipv6${NC}"
@@ -685,7 +686,7 @@ check_domain() {
     done
 }
 
-# --- 查看当前协议（修正了语法断裂大括号）---
+# --- 查看当前协议（优化版）---
 check_current_protocol() {
     if [[ ! -f $config_path ]]; then
         echo -e "${RED}错误: 未检测到配置文件 ($config_path)，请先安装协议。${NC}"
@@ -737,7 +738,6 @@ check_current_protocol() {
         if grep -q '"protocol": "trojan"' $config_path; then
             show_protocol_info "Trojan-WS" "$uuid" "$domain" "$path"
         elif grep -q '"protocol": "vmess"' $config_path; then
-            # VMess-WS 使用专用函数
             export DOMAIN="$domain"
             export UUID="$uuid"
             export WPATH="$path"
@@ -753,7 +753,6 @@ check_current_protocol() {
         if grep -q '"protocol": "trojan"' $config_path; then
             show_protocol_info "Trojan-gRPC" "$uuid" "$domain" "$serviceName"
         elif grep -q '"protocol": "vmess"' $config_path; then
-            # VMess-gRPC 使用专用函数
             export DOMAIN="$domain"
             export UUID="$uuid"
             export WPATH="$serviceName"
@@ -1566,7 +1565,7 @@ show_usage() {
 uninstall_all() {
     echo -e "${RED}⚠️ 警告：此操作将彻底卸载 Xray + Caddy 并清理所有配置和日志！${NC}"
     read -r -p "确定要继续吗？(y/N): " confirm
-    
+
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         echo -e "${GREEN}已取消卸载。${NC}"
         read -r -p "按回车键返回主菜单" dummy
@@ -1576,50 +1575,62 @@ uninstall_all() {
     echo -e "${CYAN}>>> 开始执行彻底卸载...${NC}"
 
     # 停止服务
+    echo -e "${YELLOW}[1/7] 停止 Xray 和 Caddy 服务...${NC}"
     systemctl stop xray caddy 2>/dev/null || true
     systemctl disable xray caddy 2>/dev/null || true
+    echo -e "${GREEN}    ✓ 服务已停止并禁用${NC}"
 
-    # 调用官方彻底卸载脚本（推荐 --purge）（519修改）
-if ! command -v curl &>/dev/null; then
-    log_error "curl not found"
-    return 1
-fi
+    # 调用官方彻底卸载脚本
+    echo -e "${YELLOW}[2/7] 调用 Xray 官方卸载脚本...${NC}"
+    if ! command -v curl &>/dev/null; then
+        echo -e "${RED}    ✗ curl 未安装，无法下载卸载脚本${NC}"
+        return 1
+    fi
 
-# 添加验证机制
-local script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
-local script_content
-script_content=$(curl -s --max-time 10 --retry 3 "$script_url") || {
-    log_error "Failed to download Xray installer"
-    return 1
-}
+    local script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+    local script_content
+    script_content=$(curl -s --max-time 10 --retry 3 "$script_url") || {
+        echo -e "${RED}    ✗ 下载 Xray 卸载脚本失败${NC}"
+        return 1
+    }
 
-# 简单的安全检查（确保不是HTML错误页）
-if echo "$script_content" | grep -q "<!DOCTYPE\|<html"; then
-    log_error "Downloaded file appears to be HTML, not a script"
-    return 1
-fi
+    # 简单的安全检查（确保不是HTML错误页）
+    if echo "$script_content" | grep -q "<!DOCTYPE\|<html"; then
+        echo -e "${RED}    ✗ 下载的文件似乎是HTML而非脚本${NC}"
+        return 1
+    fi
 
-bash <(echo "$script_content") remove --purge
+    bash <(echo "$script_content") remove --purge
+    echo -e "${GREEN}    ✓ Xray 官方卸载完成${NC}"
 
     # 清理 Caddy
-    echo -e "${CYAN}>>> 清理 Caddy...${NC}"
+    echo -e "${YELLOW}[3/7] 清理 Caddy 程序和配置...${NC}"
     apt-get purge -y caddy 2>/dev/null || true
-    rm -rf /etc/caddy /var/log/caddy /root/.config/caddy /usr/share/caddy 2>/dev/null
+    echo -e "${GREEN}    ✓ Caddy 程序已卸载${NC}"
+
+    echo -e "${YELLOW}[4/7] 清理 Caddy 配置文件和日志...${NC}"
+    rm -rf /etc/caddy 2>/dev/null && echo -e "${GREEN}    ✓ /etc/caddy (Caddy配置目录)${NC}"
+    rm -rf /var/log/caddy 2>/dev/null && echo -e "${GREEN}    ✓ /var/log/caddy (Caddy日志目录)${NC}"
+    rm -rf /root/.config/caddy 2>/dev/null && echo -e "${GREEN}    ✓ /root/.config/caddy (Caddy用户配置)${NC}"
+    rm -rf /usr/share/caddy 2>/dev/null && echo -e "${GREEN}    ✓ /usr/share/caddy (Caddy共享文件)${NC}"
 
     # 额外深度清理（防止残留）
-    echo -e "${CYAN}>>> 深度清理残留文件...${NC}"
-    rm -rf /usr/local/bin/xray \
-           /usr/local/etc/xray \
-           /usr/local/share/xray \
-           /var/log/xray \
-           /etc/systemd/system/xray.service \
-           /etc/systemd/system/xray@*.service \
-           /etc/apt/sources.list.d/caddy-stable.list \
-           /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-           ~/.acme.sh 2>/dev/null || true
+    echo -e "${YELLOW}[5/7] 深度清理 Xray 残留文件...${NC}"
+    rm -rf /usr/local/bin/xray 2>/dev/null && echo -e "${GREEN}    ✓ /usr/local/bin/xray (Xray二进制文件)${NC}"
+    rm -rf /usr/local/etc/xray 2>/dev/null && echo -e "${GREEN}    ✓ /usr/local/etc/xray (Xray配置目录)${NC}"
+    rm -rf /usr/local/share/xray 2>/dev/null && echo -e "${GREEN}    ✓ /usr/local/share/xray (Xray共享文件)${NC}"
+    rm -rf /var/log/xray 2>/dev/null && echo -e "${GREEN}    ✓ /var/log/xray (Xray日志目录)${NC}"
+    rm -rf /etc/systemd/system/xray.service 2>/dev/null && echo -e "${GREEN}    ✓ /etc/systemd/system/xray.service (Xray服务文件)${NC}"
+    rm -rf /etc/systemd/system/xray@*.service 2>/dev/null && echo -e "${GREEN}    ✓ /etc/systemd/system/xray@*.service (Xray实例服务)${NC}"
+
+    echo -e "${YELLOW}[6/7] 清理 Caddy APT 源和证书...${NC}"
+    rm -rf /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null && echo -e "${GREEN}    ✓ /etc/apt/sources.list.d/caddy-stable.list (Caddy APT源)${NC}"
+    rm -rf /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null && echo -e "${GREEN}    ✓ /usr/share/keyrings/caddy-stable-archive-keyring.gpg (Caddy GPG密钥)${NC}"
+    rm -rf ~/.acme.sh 2>/dev/null && echo -e "${GREEN}    ✓ ~/.acme.sh (SSL证书工具)${NC}"
 
     # 删除 xray 用户（可选，谨慎）
-    userdel -r xray 2>/dev/null || true
+    echo -e "${YELLOW}[7/7] 删除 xray 系统用户...${NC}"
+    userdel -r xray 2>/dev/null && echo -e "${GREEN}    ✓ xray 用户已删除${NC}" || echo -e "${YELLOW}    ! xray 用户不存在或删除失败${NC}"
 
     systemctl daemon-reload
     echo -e "${GREEN}✅ 彻底卸载完成！系统已清理干净。${NC}"
