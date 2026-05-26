@@ -1768,23 +1768,24 @@ handle_menu() {
         echo -e "${RED}输入不能为空，请重新输入！${NC}"
         return
     fi
+    
     if [[ -n "${PROTOCOL_CONFIG[$num]}" ]]; then
-        IFS='|' read -r _ _ _ _ _ _ cmd <<< "${PROTOCOL_CONFIG[$num]}"
-        [[ "$num" == [1-9] ]] && preparation_stack
+        # 【修改核心】：确保只提取最后一个字段作为命令执行
+        # 你的定义中第 7 个字段是真正的命令，前面的 1-6 都是配置属性
+        local IFS='|'
+        # 使用 read 读取数组，通过 _ 忽略前 6 个字段，将最后一个存入 cmd
+        read -r _ _ _ _ _ _ cmd <<< "${PROTOCOL_CONFIG[$num]}"
+        
+        # 调试：如果不确定，取消下面这行的注释看看输出是什么
+        # echo "DEBUG: 执行命令 -> $cmd"
+        
+        [[ "$num" =~ ^[1-9]$ ]] && preparation_stack
+        
+        # 直接执行解析出来的命令
         $cmd
+        
         echo -e "${GREEN}安装完成，请按回车键返回主菜单...${NC}"
-        read -r
-        main_menu
-        return
     fi
-    case "$num" in
-        c|C) check_current_protocol; main_menu ;;
-        v|V) show_usage; main_menu ;;
-        b|B) menu_bbr; main_menu ;;
-        d|D) uninstall_all; main_menu ;;
-        q|Q) exit 0 ;;
-        *) echo -e "${RED}输入错误，请重新选择！${NC}"; sleep 1; main_menu ;;
-    esac
 }
 
 # 主菜单入口
