@@ -382,24 +382,29 @@ check_and_set_timezone() {
     fi
 }
 
+
 # 自定义函数：开启BBR
 enable_bbr() {
     echo -e "${CYAN}>>> 检查并开启 BBR 网络加速...${NC}"
     
     # 1. 判断当前是否已经开启 BBR
-    if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+    if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
         echo -e "${GREEN}[INFO] BBR 加速已在运行中，无需重复开启。${NC}"
     else
-        echo -e "${YELLOW}[ACTION] 正在写入 BBR配置...${NC}"
+        echo -e "${YELLOW}[ACTION] 正在配置 BBR 参数...${NC}"
         
-        # 2. 备份 sysctl.conf 以防万一
-        cp /etc/sysctl.conf /etc/sysctl.conf.bak
+        # 确保 sysctl.conf 文件存在
+        [ ! -f /etc/sysctl.conf ] && touch /etc/sysctl.conf
+        
+        # 2. 备份 sysctl.conf (仅在文件存在时备份)
+        [ -f /etc/sysctl.conf ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
         
         # 3. 写入内核参数
-        # 使用 sed 确保如果文件中已有相关项则修改，没有则追加，避免重复堆叠
+        # 先清理可能存在的旧配置，防止重复写入
         sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
         sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
         
+        # 写入新配置
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
         
@@ -407,10 +412,10 @@ enable_bbr() {
         sysctl -p >/dev/null 2>&1
         
         # 5. 最终验证
-        if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+        if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
             echo -e "${GREEN}[OK] BBR 加速已成功开启！${NC}"
         else
-            echo -e "${RED}[ERROR] BBR 开启失败，请检查内核是否支持。${NC}"
+            echo -e "${RED}[ERROR] BBR 开启失败，请检查系统内核版本是否支持 (建议 4.9+)。${NC}"
         fi
     fi
 }
