@@ -1555,16 +1555,65 @@ EOF
 
 show_usage() {
     echo -e "${MAGENTA}--- 流量统计看板 ---${NC}"
+    
     if ! command -v vnstat &> /dev/null; then
         echo -e "${YELLOW}检测到 vnstat 未安装，正在尝试安装...${NC}"
         apt-get update && apt-get install -y vnstat
         systemctl enable vnstat --now
     fi
+
     if command -v vnstat &> /dev/null; then
-        vnstat -d && vnstat -m
+        # ==================== 自动获取网络接口 ====================
+        echo -e "${CYAN}正在自动检测主网络接口...${NC}"
+        
+        # 优先使用 ip 命令获取默认路由接口（最准确）
+        INTERFACE=$(ip -o route show default | awk '{print $5}' | head -n1)
+        
+        # 如果上面没获取到，尝试其他方法
+        if [[ -z "$INTERFACE" ]]; then
+            INTERFACE=$(ls /sys/class/net/ | grep -v lo | head -n1)
+        fi
+
+        if [[ -z "$INTERFACE" ]]; then
+            echo -e "${RED}错误: 无法自动检测网络接口${NC}"
+            read -r -p "按回车键返回主菜单"
+            return 1
+        fi
+
+        echo -e "${GREEN}检测到主网络接口: ${INTERFACE}${NC}"
+
+        # ==================== 更新 vnstat 配置 ====================
+        CONF="/etc/vnstat.conf"
+        if [[ -f "$CONF" ]]; then
+            # 备份原配置
+            cp "$CONF" "${CONF}.bak.$(date +%F_%H-%M-%S)"
+            
+            # 修改 Interface 行（支持带引号和不带引号的情况）
+            if grep -q "^Interface" "$CONF"; then
+                sed -i "s|^Interface.*|Interface \"${INTERFACE}\"|" "$CONF"
+            else
+                # 如果没有 Interface 行，则添加
+                echo "Interface \"${INTERFACE}\"" >> "$CONF"
+            fi
+            
+            echo -e "${GREEN}已将 vnstat 接口更新为: ${INTERFACE}${NC}"
+        else
+            echo -e "${YELLOW}警告: ${CONF} 不存在${NC}"
+        fi
+
+        # 重启 vnstat 服务使配置生效
+        systemctl restart vnstat
+        sleep 1
+
+        # 显示流量统计
+        echo -e "\n${MAGENTA}=== 今日流量 ===${NC}"
+        vnstat -d
+        echo -e "\n${MAGENTA}=== 本月流量 ===${NC}"
+        vnstat -m
     else
         echo -e "${RED}错误: vnstat 不可用。${NC}"
     fi
+
     read -r -p "按回车键返回主菜单"
 }
 
