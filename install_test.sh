@@ -75,7 +75,6 @@ check_root() {
         exit 1
     fi
 }
-
 # 自定义函数：错误信息检查（519修改）
 check_command() {
     local cmd=("$@")
@@ -108,7 +107,6 @@ get_local_ip() {
             return 0
         fi
     done
-    
     # 都失败，尝试从本地网络获取
     local_ip=$(hostname -I | awk '{print $1}')
     if [[ -n "$local_ip" ]]; then
@@ -1784,7 +1782,7 @@ show_menu() {
     echo -e "-----------------------------------------------------------"
     echo -e "${BLUE}  【1】 . 安装 VLESS-REALITY-Vision${NC}   ${RED}【推荐，最强隐蔽/不依赖域名】${NC}"
     echo -e "${BLUE}  【2】 . 安装 VLESS-REALITY-xhttp${NC}    ${CYAN}【最新黑科技/综合最强】${NC}"   
-    echo -e "${BLUE}  【3】 . 安装 VLESS-WS-TLS${NC}           ${CYAN}【CDN兼容/标准WebSocket】${NC}"
+    echo -e "${BLUE}  【3】 . 安装 VLESS-WS-TLS${NC}           ${RED}【推荐，需要域名/CDN兼容/标准WebSocket】${NC}"
     echo -e "${BLUE}  【4】 . 安装 VLESS-gRPC-TLS${NC}         ${CYAN}【低延迟/多路复用】${NC}"
     echo -e "${BLUE}  【5】 . 安装 VLESS-XHTTP-TLS${NC}        ${CYAN}【流式传输/防指纹】${NC}"
     echo -e "${BLUE}  【6】 . 安装 Trojan-WS-TLS${NC}          ${CYAN}【仿HTTPS/老牌稳定】${NC}"
