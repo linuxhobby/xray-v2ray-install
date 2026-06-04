@@ -88,6 +88,11 @@ check_command() {
     fi
 }
 
+# 自定义函数：简单错误日志（修复 uninstall_all 中缺失的 log_error 定义导致的 set -e 崩溃）
+log_error() {
+    echo -e "${RED}[ERROR] $*${NC}" >&2
+}
+
 # 自定义函数：错误信息检查（519新增）
 get_local_ip() {
     local ip
@@ -116,7 +121,7 @@ get_local_ip() {
         return 0
     fi
     
-    echo "获取失败"
+    echo ""
     return 1
 }
 
@@ -425,7 +430,7 @@ enable_bbr() {
 # BBR 管理子菜单
 menu_bbr() {
     clear
-    # 1. 获取内核版本
+    # 获取内核版本
     local kernel_version
     kernel_version=$(uname -r)
     
@@ -437,24 +442,14 @@ menu_bbr() {
     
     local ver_sub
     ver_sub=$(echo "$kernel_version" | cut -d. -f2)
-    # 2. 获取当前拥塞控制算法
-    local current_algo
-    current_algo=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}' 2>/dev/null || echo "未知")
     
-    # 3. 判定 BBRv3 兼容性 (内核 >= 6.4)
-    local v3_support
-    v3_support="${RED}不支持 v3${NC}"
-    
-    local ver_main
-    ver_main=$(echo "$kernel_version" | cut -d. -f1)
-    
-    local ver_sub
-    ver_sub=$(echo "$kernel_version" | cut -d. -f2)
+    # 判定 BBRv3 兼容性 (内核 >= 6.4)
+    local v3_support="${RED}不支持 v3${NC}"
     if [ "$ver_main" -gt 6 ] || { [ "$ver_main" -eq 6 ] && [ "$ver_sub" -ge 4 ]; }; then
         v3_support="${GREEN}支持 v3${NC}"
     fi
 
-    # 4. 判定显示状态
+    # 判定显示状态
     local bbr_status
     if [[ "$current_algo" == "bbr" ]]; then
         bbr_status="${GREEN}运行中 (BBR/v1/v3)${NC}"
@@ -633,6 +628,9 @@ install_caddy() {
         echo -e "${GREEN}[OK] Caddy 安装成功${NC}"
     fi
     mkdir -p /etc/caddy
+
+    # 确保 Caddy 开机自启（TLS 协议依赖 Caddy 反代 443）
+    systemctl enable caddy >/dev/null 2>&1 || true
 }
 
 # --- 域名解析检测（完全保留）---
@@ -686,7 +684,13 @@ check_domain() {
             echo -e "${RED}错误: 域名解析地址与本机 IP 不符！${NC}"
             echo -e "${YELLOW}1. 重新输入 | 2. 强制跳过 (适合已开启 CDN 的域名)${NC}"
             read -r -p "请选择: " retry_choice
-            [[ "$retry_choice" == "2" ]] && break
+            if [[ "$retry_choice" == "2" ]]; then
+                echo -e "${YELLOW}已强制跳过 IP 匹配检查（请确保域名已正确解析或 CDN 已开启）。${NC}"
+                echo "$domain" > /tmp/domain
+                export domain
+                break
+            fi
+            # 其他输入或空 → 循环继续让用户重新输入
         fi
     done
 }
@@ -786,6 +790,10 @@ gen_vless_reality_unified() {
 
     # ==================== 公共初始化 ====================
     echo -e "${CYAN}正在配置 VLESS-REALITY-${mode^}...${NC}"
+
+    # 停止并禁用 Caddy，释放 443 端口（Reality 由 Xray 直接在 443 监听；避免前一个 TLS 协议遗留的 Caddy 导致端口冲突或重启后双监听）
+    systemctl stop caddy 2>/dev/null || true
+    systemctl disable caddy 2>/dev/null || true
 
     local flow=""
     local network="tcp"
@@ -980,7 +988,7 @@ EOF
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy localhost:$port {
+    reverse_proxy 127.0.0.1:$port {
         transport http {
             versions h2c
         }
@@ -1142,9 +1150,9 @@ gen_trojan_grpc() {
     install_caddy 
     common_tls_setup
     
-    # === 密码处理（统一变量名）===
+    # === 密码处理（统一变量名，使用 uuid 变量名以匹配 check_current_protocol 提取和 show 逻辑）===
     local uuid
-    pass=$(openssl rand -hex 8)
+    uuid=$(openssl rand -hex 8)
 
     local serviceName
     serviceName=$(openssl rand -hex 8)
@@ -1179,7 +1187,7 @@ $domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy localhost:$port {
+    reverse_proxy 127.0.0.1:$port {
         transport http {
             versions h2c
         }
@@ -1327,7 +1335,7 @@ $domain {
     tls {
         protocols tls1.2 tls1.3
     }
-    reverse_proxy localhost:$port {
+    reverse_proxy 127.0.0.1:$port {
         transport http {
             versions h2c
         }
@@ -1586,26 +1594,26 @@ uninstall_all() {
     systemctl disable xray caddy 2>/dev/null || true
 
     # 调用官方彻底卸载脚本（推荐 --purge）（519修改）
-if ! command -v curl &>/dev/null; then
-    log_error "curl not found"
-    return 1
-fi
+    if ! command -v curl &>/dev/null; then
+        log_error "curl not found"
+        return 1
+    fi
 
-# 添加验证机制
-local script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
-local script_content
-script_content=$(curl -s --max-time 10 --retry 3 "$script_url") || {
-    log_error "Failed to download Xray installer"
-    return 1
-}
+    # 添加验证机制（防止下载到 HTML 错误页等）
+    local script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+    local script_content
+    script_content=$(curl -s --max-time 10 --retry 3 "$script_url") || {
+        log_error "Failed to download Xray installer"
+        return 1
+    }
 
-# 简单的安全检查（确保不是HTML错误页）
-if echo "$script_content" | grep -q "<!DOCTYPE\|<html"; then
-    log_error "Downloaded file appears to be HTML, not a script"
-    return 1
-fi
+    # 简单的安全检查（确保不是HTML错误页）
+    if echo "$script_content" | grep -q "<!DOCTYPE\|<html"; then
+        log_error "Downloaded file appears to be HTML, not a script"
+        return 1
+    fi
 
-bash <(echo "$script_content") remove --purge
+    bash <(echo "$script_content") remove --purge || true
 
     # 清理 Caddy
     echo -e "${CYAN}>>> 清理 Caddy...${NC}"
@@ -1637,9 +1645,9 @@ bash <(echo "$script_content") remove --purge
 show_status() {
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${RED}====================== 脚本环境信息 =======================${NC}"
-    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/05/20   ${NC}"
+    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/06/03   ${NC}"
     echo -e "${RED}   名称：${NC}${BLUE}xray 一键安装脚本    ${NC}"
-    echo -e "${RED}   版本号：${NC}${BLUE}v1.0.05.20.11.56（Release）    ${NC}"
+    echo -e "${RED}   版本号：${NC}${BLUE}v1.0.06.03.18.50（Release）    ${NC}"
     echo -e "${RED}   适用环境：${NC}${BLUE}Debian12/13、Ubuntu25/26    ${NC}"
     echo -e "${RED}   当前系统：${NC}${GREEN}$OS_NAME    ${NC}"
 
@@ -1771,7 +1779,7 @@ handle_menu() {
         c|C) check_current_protocol; main_menu ;;
         v|V) show_usage; main_menu ;;
         b|B) menu_bbr; main_menu ;;
-        d|D) uninstall_all; main_menu ;;
+        d|D) uninstall_all || true; main_menu ;;
         q|Q) exit 0 ;;
         *) echo -e "${RED}输入错误，请重新选择！${NC}"; sleep 1; main_menu ;;
     esac
