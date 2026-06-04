@@ -11,7 +11,17 @@
 # 🚀 Xray 一键安装脚本
 > 基于 **Xray + Caddy** 的多协议一键部署脚本，快速部署 Xray 服务端，集成 Caddy 自动配置 TLS，支持 Reality / WS / gRPC / XHTTP / Trojan / VMess 等多种主流协议，开箱即用。
 
-支持协议矩阵
+## 📥 一键安装
+如果没有安装wget或curl，请先安装
+```
+apt update && apt install wget curl -y
+```
+然后执行：
+```
+wget -N https://raw.githubusercontent.com/linuxhobby/xray-v2ray-install/main/install.sh && chmod +x install.sh && ./install.sh
+```
+---
+ ## 📖 支持协议矩阵
 - VLESS-REALITY-Vision			✅【推荐，最强隐蔽/不依赖域名】
 - VLESS-REALITY-xhttp			✅【最新黑科技/综合最强】
 - VLESS-WS-TLS			✅【推荐，需要域名/CDN兼容/标准】
@@ -44,18 +54,6 @@
 - 配置 A 记录解析到服务器 IP
 
 📌 VLESS-REALITY 协议无需域名
-
-## 📥 一键安装
-如果没有安装wget或curl，请先安装
-```
-apt update && apt install wget curl -y
-```
-然后执行：
-```
-wget -N https://raw.githubusercontent.com/linuxhobby/xray-v2ray-install/main/install.sh && chmod +x install.sh && ./install.sh
-```
----
-
 ## 🖼️ 脚本界面展示
 <img width="579" height="628" alt="image" src="https://github.com/user-attachments/assets/057d86ac-2ea3-4cc6-953a-8cffc7ed8458" />
 
