@@ -20,7 +20,8 @@
 - Trojan-WS-TLS  【仿HTTPS/老牌稳定】
 - Trojan-gRPC-TLS  【高效转发/适合游戏】
 - VMess-WS-TLS  【广泛兼容/传统方案】  
-- VMess-gRPC-TLS  【兼容gRPC新特性】
+- VMess-gRPC-TLS  【兼容gRPC新特性】  
+
 ✔ 一键自动化安装  
 ✔ 自动申请 HTTPS 证书  
 ✔ 多协议一键切换，再生成新的协议时自动覆盖原先的协议配置  
