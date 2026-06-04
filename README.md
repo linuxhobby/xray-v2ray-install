@@ -12,15 +12,15 @@
 > 基于 **Xray + Caddy** 的多协议一键部署脚本，快速部署 Xray 服务端，集成 Caddy 自动配置 TLS，支持 Reality / WS / gRPC / XHTTP / Trojan / VMess 等多种主流协议，开箱即用。
 
 支持协议矩阵
-- VLESS-REALITY-Vision			 ✅ 【推荐，最强隐蔽/不依赖域名】
-- VLESS-REALITY-xhttp				✅ 【最新黑科技/综合最强】
-- VLESS-WS-TLS				✅ 【推荐，需要域名/CDN兼容/标准】
-- VLESS-gRPC-TLS 				 ✅ 【低延迟/多路复用】
-- VLESS-XHTTP-TLS 			✅ 【流式传输/防指纹】
-- Trojan-WS-TLS  			✅ 【仿HTTPS/老牌稳定】
-- Trojan-gRPC-TLS 			 ✅ 【高效转发/适合游戏】
-- VMess-WS-TLS  			✅ 【广泛兼容/传统方案】  
-- VMess-gRPC-TLS 			 ✅ 【兼容gRPC新特性】  
+- VLESS-REALITY-Vision			✅【推荐，最强隐蔽/不依赖域名】
+- VLESS-REALITY-xhttp			✅【最新黑科技/综合最强】
+- VLESS-WS-TLS			✅【推荐，需要域名/CDN兼容/标准】
+- VLESS-gRPC-TLS			 ✅【低延迟/多路复用】
+- VLESS-XHTTP-TLS			✅【流式传输/防指纹】
+- Trojan-WS-TLS			✅【仿HTTPS/老牌稳定】
+- Trojan-gRPC-TLS			 ✅【高效转发/适合游戏】
+- VMess-WS-TLS			✅【广泛兼容/传统方案】  
+- VMess-gRPC-TLS			✅【兼容gRPC新特性】  
 
 ✔ 一键自动化安装  
 ✔ 自动申请 HTTPS 证书  
