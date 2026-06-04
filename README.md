@@ -10,7 +10,17 @@
 ## 📖 项目介绍
 # 🚀 Xray 一键安装脚本
 > 基于 **Xray + Caddy** 的多协议一键部署脚本，快速部署 Xray 服务端，集成 Caddy 自动配置 TLS，支持 Reality / WS / gRPC / XHTTP / Trojan / VMess 等多种主流协议，开箱即用。
+## ⚠️ 安装前准备
 
+### 1️⃣ VPS 服务器
+- 一台带公网 IPv4 或 IPv6 的服务器。
+- 推荐Vultr，可以随时换vps换IP，按时计费。
+- vultr:(https://www.vultr.com/?ref=6999923)  
+- racknerd:(https://my.racknerd.com/aff.php?aff=19920)
+### 2️⃣ 域名（可选）
+- 配置 A 记录解析到服务器 IP
+
+📌 VLESS-REALITY 协议无需域名
 ## 📥 一键安装
 如果没有安装wget或curl，请先安装
 ```
@@ -43,17 +53,7 @@ wget -N https://raw.githubusercontent.com/linuxhobby/xray-v2ray-install/main/ins
 - ✅ Ubuntu 25 / 26  
 
 ---
-## ⚠️ 安装前准备
 
-### 1️⃣ VPS 服务器
-- 一台带公网 IPv4 或 IPv6 的服务器。
-- 推荐Vultr，可以随时换vps换IP，按时计费。
-- vultr:(https://www.vultr.com/?ref=6999923)  
-- racknerd:(https://my.racknerd.com/aff.php?aff=19920)
-### 2️⃣ 域名（可选）
-- 配置 A 记录解析到服务器 IP
-
-📌 VLESS-REALITY 协议无需域名
 ## 🖼️ 脚本界面展示
 <img width="579" height="628" alt="image" src="https://github.com/user-attachments/assets/057d86ac-2ea3-4cc6-953a-8cffc7ed8458" />
 
