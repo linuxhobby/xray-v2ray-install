@@ -17,6 +17,7 @@
 - 推荐Vultr，可以随时换vps换IP，按时计费。
 - vultr:(https://www.vultr.com/?ref=6999923)  
 - racknerd:(https://my.racknerd.com/aff.php?aff=19920)
+- Evoxt：(https://console.evoxt.com/aff.php?aff=4352)
 ### 2️⃣ 域名（可选）
 - 配置 A 记录解析到服务器 IP
 
