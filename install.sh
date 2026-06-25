@@ -784,122 +784,6 @@ check_current_protocol() {
     echo -e "${YELLOW}-----------------------------------------------------------${NC}"
     read -r -p "按回车键返回主菜单"
 }
-
-# --- 升级 Xray 核心 ---
-upgrade_xray() {
-    echo -e "${CYAN}============ Xray 升级工具 ============${NC}"
-
-    # 1. 检查当前安装版本
-    local current_version=""
-    if command -v xray &> /dev/null; then
-        current_version=$(xray version 2>/dev/null | head -1 | grep -oP 'Xray \K[0-9.]+' || echo "")
-    fi
-
-    if [[ -z "$current_version" ]]; then
-        echo -e "${RED}未检测到已安装的 Xray。请先通过菜单安装协议。${NC}"
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-    echo -e "  当前版本: ${GREEN}${current_version}${NC}"
-
-    # 2. 获取 GitHub 最新版本
-    echo -e "  ${CYAN}正在查询最新版本...${NC}"
-    local latest_version=""
-    latest_version=$(curl -s --max-time 10 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | grep -oP '"tag_name":\s*"\Kv?[0-9.]+' || echo "")
-
-    if [[ -z "$latest_version" ]]; then
-        # 备用：从 Xray-install 脚本获取
-        latest_version=$(curl -s --max-time 10 "https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh" | grep -oP 'LATEST_RELEASE=\K[0-9.]+' || echo "")
-    fi
-
-    if [[ -z "$latest_version" ]]; then
-        echo -e "${RED}无法获取最新版本信息，请检查网络连接。${NC}"
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-    echo -e "  最新版本: ${GREEN}${latest_version}${NC}"
-
-    # 3. 版本比较
-    if [[ "$current_version" == "$latest_version" ]]; then
-        echo -e "\n  ${GREEN}✓ 当前已是最新版本，无需升级。${NC}"
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-
-    echo -e "\n  ${YELLOW}发现新版本: ${current_version} → ${latest_version}${NC}"
-    read -r -p "  是否升级？(y/n): " confirm
-    if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
-        echo -e "${YELLOW}已取消升级。${NC}"
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-
-    # 4. 备份当前配置
-    local backup_dir="/root/xray_backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$backup_dir"
-    if [[ -d "$conf_dir" ]]; then
-        cp -r "$conf_dir" "$backup_dir/config"
-        echo -e "  ${GREEN}[OK] 配置已备份到 ${backup_dir}${NC}"
-    fi
-
-    # 5. 停止服务
-    echo -e "  ${CYAN}停止 Xray 服务...${NC}"
-    systemctl stop xray 2>/dev/null || true
-
-    # 6. 下载并安装新版本
-    echo -e "  ${CYAN}正在下载并安装 Xray v${latest_version}...${NC}"
-    local tmp_script
-    tmp_script=$(mktemp)
-    if ! check_command curl -fsSL https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh -o "$tmp_script"; then
-        echo -e "${RED}下载安装脚本失败！${NC}"
-        rm -f "$tmp_script"
-        # 尝试恢复服务
-        systemctl start xray 2>/dev/null || true
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-
-    export XRAY_INSTALL_SKIP_START=1
-    if ! check_command bash "$tmp_script" install --version "$latest_version"; then
-        echo -e "${RED}安装失败！正在恢复旧版本...${NC}"
-        rm -f "$tmp_script"
-        # 尝试恢复备份
-        if [[ -d "$backup_dir/config" ]]; then
-            cp -r "$backup_dir/config/"* "$conf_dir/" 2>/dev/null || true
-        fi
-        systemctl start xray 2>/dev/null || true
-        read -r -p "按回车键返回主菜单"
-        return
-    fi
-    rm -f "$tmp_script"
-
-    # 7. 确保符号链接存在
-    ln -sf /usr/local/bin/xray /usr/bin/xray 2>/dev/null || true
-
-    # 8. 重启服务
-    echo -e "  ${CYAN}重启 Xray 服务...${NC}"
-    systemctl daemon-reload
-    systemctl enable xray >/dev/null 2>&1 || true
-    systemctl start xray 2>/dev/null || true
-
-    # 9. 验证
-    sleep 2
-    if systemctl is-active --quiet xray; then
-        local new_version
-        new_version=$(xray version 2>/dev/null | head -1 | grep -oP 'Xray \K[0-9.]+' || echo "未知")
-        echo -e "\n  ${GREEN}✓ 升级成功！${NC}"
-        echo -e "  ${GREEN}  ${current_version} → ${new_version}${NC}"
-        echo -e "  ${CYAN}  配置文件路径: ${config_path}${NC}"
-        echo -e "  ${CYAN}  备份位置: ${backup_dir}${NC}"
-    else
-        echo -e "\n  ${RED}✗ 升级后服务启动失败，请检查配置。${NC}"
-        echo -e "  ${YELLOW}  查看日志: journalctl -u xray -n 50${NC}"
-        echo -e "  ${YELLOW}  恢复配置: cp -r ${backup_dir}/config/* ${conf_dir}/${NC}"
-    fi
-
-    read -r -p "按回车键返回主菜单"
-}
-
 # ------------------------------------------------ 核心协议模块 ------------------------------------------------
 gen_vless_reality_unified() {
     local mode="$1"
@@ -1867,12 +1751,11 @@ show_menu() {
     echo -e "${BLUE}  【8】 . 安装 VMess-WS-TLS${NC}           ${YELLOW}【广泛兼容/传统方案】${NC}"
     echo -e "${BLUE}  【9】 . 安装 VMess-gRPC-TLS${NC}         ${YELLOW}【兼容gRPC新特性】${NC}"
     echo -e "-----------------------------------------------------------"
-    echo -e "${MAGENTA}  【c】 . 查看当前协议信息与链接${NC}"
-    echo -e "${MAGENTA}  【u】 . 升级 Xray 核心${NC}"
+    echo -e "${MAGENTA}  【c】 . 查看当前协议信息与链接${NC}" 
     echo -e "${MAGENTA}  【v】 . 查看流量统计 (vnstat)${NC}"
     echo -e "${MAGENTA}  【b】 . 管理网络加速 (BBR)${NC}"
     echo -e "${GREEN}  【d】 . 卸载与清理${NC}"
-    echo -e "${YELLOW}  【q】 . 退出脚本${NC}"
+    echo -e "${YELLOW}  【q】 . 退出脚本${NC}" 
     echo -e "-----------------------------------------------------------"
 }
 
@@ -1894,7 +1777,6 @@ handle_menu() {
     fi
     case "$num" in
         c|C) check_current_protocol; main_menu ;;
-        u|U) upgrade_xray; main_menu ;;
         v|V) show_usage; main_menu ;;
         b|B) menu_bbr; main_menu ;;
         d|D) uninstall_all || true; main_menu ;;
