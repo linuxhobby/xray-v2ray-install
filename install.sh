@@ -45,7 +45,7 @@ is_core="xray"
 conf_dir="/usr/local/etc/xray"
 config_path="${conf_dir}/config.json"
 PRESET_DOMAIN="" #如果为空，安装过程中手动输入
-XRAY_VERSION="26.5.3"   #最新版 latest
+XRAY_VERSION="26.3.27"   #最新版 latest
 CADDY_VERSION="2.11.4"
 FIX_VER=1 #1，锁定。0，最新版#
 
