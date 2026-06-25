@@ -1645,7 +1645,7 @@ uninstall_all() {
 show_status() {
     OS_NAME=$(grep "PRETTY_NAME" /etc/os-release | cut -d '"' -f 2 2>/dev/null || echo "Linux")
     echo -e "${RED}====================== 脚本环境信息 =======================${NC}"
-    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/06/03   ${NC}"
+    echo -e "${RED}   作者：${NC}${BLUE}人生若只如初见，更新：2026/06/26   ${NC}"
     echo -e "${RED}   名称：${NC}${BLUE}xray 一键安装脚本    ${NC}"
     echo -e "${RED}   版本号：${NC}${BLUE}v1.0.06.03.18.50（Release）    ${NC}"
     echo -e "${RED}   适用环境：${NC}${BLUE}Debian12/13、Ubuntu25/26    ${NC}"
