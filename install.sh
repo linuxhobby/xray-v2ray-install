@@ -51,7 +51,6 @@ FIX_VER=1 #1，锁定。0，最新版#
 
 # Reality 伪装域名配置（随机选择）
 REALITY_DEST_OPTIONS=(
-    "www.apple.com"              # 苹果，极稳定
     "www.cloudflare.com"         # Cloudflare
     "www.amazon.com"             # 亚马逊
     "www.adobe.com"              # Adobe
