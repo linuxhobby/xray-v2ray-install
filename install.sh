@@ -303,6 +303,125 @@ check_dependencies() {
     fi
 }
 
+# 自定义函数：检测主出口网卡（vnstat 统计用）
+detect_primary_interface() {
+    local iface=""
+
+    # 1、优先取默认路由所走的网卡
+    iface=$(ip route get 8.8.8.8 2>/dev/null | grep -Po '(?<=dev )(\S+)' | head -1) || iface=""
+    if [ -z "$iface" ]; then
+        iface=$(ip -o -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++){if($i=="dev"){print $(i+1); exit}}}') || iface=""
+    fi
+    # 2、兜底：第一个处于 up 状态的非 lo 网卡
+    if [ -z "$iface" ]; then
+        iface=$(ip -o link show up 2>/dev/null | awk -F': ' '$2 != "lo" {print $2; exit}') || iface=""
+    fi
+    # 3、最后兜底
+    if [ -z "$iface" ]; then
+        iface=$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -1) || iface=""
+    fi
+
+    echo "$iface"
+}
+
+# 自定义函数：向 vnstat.conf 写入配置项
+# 自动兼容 "Interface" / "# Interface" / "; Interface" 三种写法，配置不存在则追加到末尾
+write_vnstat_conf_key() {
+    local conf="$1"
+    local key="$2"
+    local value="$3"
+
+    [ -f "$conf" ] || return 1
+
+    if grep -qE "^[[:space:]]*[;#]*[[:space:]]*${key}[[:space:]]" "$conf"; then
+        sed -i -E "s|^[[:space:]]*[;#]*[[:space:]]*${key}[[:space:]]+.*|${key} ${value}|" "$conf"
+    else
+        echo "${key} ${value}" >> "$conf"
+    fi
+    return 0
+}
+
+# 自定义函数：安装并配置 vnstat（安装阶段直接锁定出口网卡，统计更精准）
+setup_vnstat() {
+    echo -e "${CYAN}>>> 配置 vnstat 流量统计...${NC}"
+
+    if ! command -v vnstat >/dev/null 2>&1; then
+        echo -e "${CYAN}未检测到 vnstat，正在安装...${NC}"
+        apt-get install -y vnstat -qq >/dev/null 2>&1 || {
+            echo -e "${YELLOW}[WARN] vnstat 安装失败，跳过流量统计配置${NC}"
+            return 0
+        }
+    fi
+
+    local iface
+    iface=$(detect_primary_interface)
+
+    if [ -z "$iface" ]; then
+        echo -e "${YELLOW}[WARN] 未能自动检测到出口网卡，保持 vnstat 默认配置${NC}"
+        systemctl enable vnstat >/dev/null 2>&1 || true
+        systemctl restart vnstat >/dev/null 2>&1 || true
+        return 0
+    fi
+    echo -e "${CYAN}>>> 检测到出口网卡: ${iface}${NC}"
+
+    local conf="" c
+    for c in /etc/vnstat.conf /usr/local/etc/vnstat.conf; do
+        if [ -f "$c" ]; then conf="$c"; break; fi
+    done
+
+    # 兜底：配置文件缺失则直接生成一份最小配置，确保 Interface 一定落盘
+    if [ -z "$conf" ]; then
+        conf="/etc/vnstat.conf"
+        [ -f "$conf" ] || echo "Interface \"${iface}\"" > "$conf"
+    fi
+
+    # 首次修改前备份原配置
+    [ -f "${conf}.bak" ] || cp -a "$conf" "${conf}.bak" 2>/dev/null || true
+
+    # 关键项：把实际出口网卡写进 Interface（覆盖默认的 eth0 / 空值 / 注释行）
+    write_vnstat_conf_key "$conf" "Interface" "\"${iface}\""
+    # 只统计指定网卡，避免 docker/虚拟网卡被自动纳入
+    write_vnstat_conf_key "$conf" "AlwaysAddNewInterfaces" "0"
+    write_vnstat_conf_key "$conf" "RescanDatabaseOnSave" "0"
+
+    if grep -qE "^Interface[[:space:]]+\"${iface}\"" "$conf"; then
+        echo -e "${GREEN}[OK] 已将网卡 ${iface} 写入 ${conf} 的 Interface 项${NC}"
+    else
+        echo -e "${YELLOW}[WARN] 写入 ${conf} 未生效，请手动检查 Interface 项${NC}"
+    fi
+
+    # 停服后按系统实际情况整理：清掉系统里已不存在的网卡（如默认的 eth0），只保留真实网卡
+    systemctl stop vnstat >/dev/null 2>&1
+    local dbdir stale path
+    dbdir=$(sed -nE 's|^[[:space:]]*[;#]*[[:space:]]*DatabaseDir[[:space:]]+"([^"]+)".*|\1|p' "$conf" | head -1) || dbdir=""
+    [ -z "$dbdir" ] && dbdir="/var/lib/vnstat"
+
+    if [ -d "$dbdir" ]; then
+        for path in "$dbdir"/*; do
+            [ -e "$path" ] || continue
+            stale=$(basename "$path")
+            case "$stale" in *.*) continue;; esac
+            if [ "$stale" != "$iface" ] && [ ! -e "/sys/class/net/$stale" ]; then
+                echo -e "${CYAN}>>> 清理已不存在的网卡统计: ${stale}${NC}"
+                rm -f "$path" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    # 为该网卡建立数据库（vnstat 2.x 用 --add，1.x 用 -u）
+    vnstat --add -i "$iface" >/dev/null 2>&1 || vnstat -u -i "$iface" >/dev/null 2>&1 || true
+
+    systemctl enable vnstat >/dev/null 2>&1 || true
+    systemctl restart vnstat >/dev/null 2>&1 || systemctl start vnstat >/dev/null 2>&1 || true
+
+    if systemctl is-active --quiet vnstat; then
+        echo -e "${GREEN}[OK] vnstat 已在后台运行${NC}"
+    else
+        echo -e "${YELLOW}[WARN] vnstat 服务未启动${NC}"
+    fi
+    return 0
+}
+
 # 自定义函数：强制开启防火墙函数
 # 自定义函数：强制开启防火墙函数（包含自动安装逻辑）
 enable_firewall() {
@@ -385,7 +504,6 @@ check_and_set_timezone() {
     fi
 }
 
-# 自定义函数：开启BBR
 # 自定义函数：开启BBR
 enable_bbr() {
     echo -e "${CYAN}>>> 检查并开启 BBR 网络加速...${NC}"
@@ -543,7 +661,8 @@ preparation_stack() {
     # 调用开启BBR函数
     enable_bbr
 
-    systemctl enable vnstat --now 2>/dev/null || true
+    # 安装并配置 vnstat（写入出口网卡）
+    setup_vnstat
 
     # ==================== Xray 安装 ====================
     # 安装 Xray（安全方式：先下载再执行）
@@ -1561,29 +1680,20 @@ EOF
 show_usage() {
     echo -e "${MAGENTA}--- 流量统计看板 ---${NC}"
 
-    # 先检测出口网卡名称
-    local interface=$(ip route get 8.8.8.8 2>/dev/null | grep -Po '(?<=dev )(\S+)' | head -1)
-    if [ -z "$interface" ]; then
-        interface=$(ls /sys/class/net | grep -v lo | head -1)
-    fi
-    echo -e "${CYAN}>>> 检测到出口网卡: ${interface}${NC}"
+    # 安装 / 校验 vnstat 并确保配置文件里写的是当前出口网卡
+    setup_vnstat
 
-    if ! command -v vnstat &> /dev/null; then
-        echo -e "${YELLOW}检测到 vnstat 未安装，正在尝试安装...${NC}"
-        apt-get update && apt-get install -y vnstat
-        systemctl enable vnstat --now
-    fi
-
-    # 将网卡名称写入 vnstat.conf
-    if [ -f "/etc/vnstat.conf" ]; then
-        sed -i "s/^Interface .*/Interface \"$interface\"/" /etc/vnstat.conf
-        echo -e "${GREEN}已将网卡 ${interface} 写入 vnstat.conf${NC}"
-    fi
-    vnstat -u -i "$interface" >/dev/null 2>&1
-    systemctl restart vnstat >/dev/null 2>&1
+    local interface
+    interface=$(detect_primary_interface)
 
     if command -v vnstat &> /dev/null; then
-        vnstat -d && vnstat -m
+        if [ -n "$interface" ]; then
+            vnstat -d -i "$interface" 2>/dev/null || vnstat -d 2>/dev/null || true
+            vnstat -m -i "$interface" 2>/dev/null || vnstat -m 2>/dev/null || true
+        else
+            vnstat -d 2>/dev/null || true
+            vnstat -m 2>/dev/null || true
+        fi
     else
         echo -e "${RED}错误: vnstat 不可用。${NC}"
     fi
